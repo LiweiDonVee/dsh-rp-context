@@ -104,7 +104,11 @@ export async function createContextStore({ directory }) {
       return serial(async () => {
         try {
           const transfer = validateTransferState(input, sessionIds), state = await readState();
-          const conflicts = transfer.payload.sessions.filter(item => Object.hasOwn(state.sessions, key(item.sessionId))).map(item => ({ code: 'RESTORE_ID_CONFLICT', id: item.sessionId }));
+          const conflicts = transfer.payload.sessions.filter(item => {
+            if (!Object.hasOwn(state.sessions, key(item.sessionId))) return false;
+            const current = validateTransferState({ schemaVersion: 1, revision: state.revision, payload: { sessions: [{ sessionId: item.sessionId, state: state.sessions[key(item.sessionId)] }] } }, [item.sessionId]);
+            return transferFingerprint(current.payload.sessions[0].state) !== transferFingerprint(item.state);
+          }).map(item => ({ code: 'RESTORE_ID_CONFLICT', id: item.sessionId }));
           return { supported: conflicts.length === 0, conflicts, requirements: [] };
         } catch (error) {
           if (error.code !== 'RESTORE_PAYLOAD_INVALID') throw error;

@@ -27,3 +27,14 @@ Context 窗口只影响自己的材料与 writer；测试核对较早正文已�
 `node scripts/export-lock-smoke.mjs --context-tgz ./artifacts/dsh-rp-context-0.2.0.tgz`（或 `pnpm smoke:export-lock`）只安装 Context，在独立 rc.3 home 验证 standalone 与真实外层 Agent.runMaintenance 下调用同一 export 的组合，以及实际 generating 时拒绝。没有 writer/restore 场景；唯一模型调用用于受控 busy guard。默认证据在 `.runtime/export-lock-evidence`，记录受测包 SHA256。
 
 这是公开 SDK 锁组合的定点回归。七包 SavedStory 必须由协调者带入批准后的 Context 包重验；不以省略 Context 或新建 alreadyLocked 字段代替。
+
+## 恢复后同 payload 的冷态 preflight
+
+```powershell
+node scripts/restore-preflight-smoke.mjs `
+  --context-tgz ./artifacts/dsh-rp-context-0.2.0.tgz `
+  --last-step-tgz ./downloads/dsh-rp-last-step-0.3.0.tgz `
+  --snapshot ./downloads/main-snapshot.json
+```
+
+该脚本显式接收真实包和已导出的 Snapshot，记录三者 SHA256；在独立 rc.3 home 中只安装 Context/LastStep。它以公开 Session persistence create/append/flush/close 和 query 冷验证原始 exact-ID 日志，先真实 LS.restoreState，再 Context.restoreState。检查同 payload 的 warm/cold preflight、真实冻结 note proof、后续 owner 改注冲突及同 job replay 无覆写。不会恢复 GM/StoryKit 或 resume/activate Agent，不会请求模型。默认证据在 `.runtime/restore-preflight-evidence`，`--evidence-dir` 可覆盖；这项 owner seam 回归不替代协调者的七包恢复验收。

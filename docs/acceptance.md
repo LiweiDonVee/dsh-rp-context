@@ -1,5 +1,13 @@
 # Context 验收记录
 
+## 同 Snapshot 冷态 preflight 修复 — T9
+
+七包 rev3 在所有 owner 已恢复、尚未激活的 pending 状态重启后，Context preflight 把任何已有 Session row 直接判为冲突。仅修改 preflight：严格验证并比较完整规范化 row，相同状态支持，设置、注、计划、缓存的真实差异仍拒绝。restoreState 的新 job 冲突、journal 身份、严格 proof 与同任务无覆写路径保持。
+
+3 项目标回归先 RED，完整检查通过 68 host +19 UI。新包 SHA256：`3b6fa7b2cae4864a718b4d48216257b2c1f27b52bacb406230e164fe06ce85cd`。实际官方 rc.3 隔离 home 安装当前 Context 与已验收 LS-B d985888 包，公开导入实际 rev3 Snapshot 的两条原日志（73/52 events，inherited 0/49），冷验证后按 LS→Context 恢复。相同状态的 warm 与真实进程重启后 preflight 均支持，冻结作者注双证可读；owner 后改注则冲突，同 job replay 保留改注。模型、writer、历史工具执行均 0。
+
+此证据验证真实 Context/LastStep owner seam，不代表七包激活或完整 SavedStory 恢复通过；协调者需以获批新包替换 manifest 后重验 pending 场景。
+
 ## Export maintenance 组合修复 — R24/T17
 
 七包 SavedStory 原生场景发现 Context.exportState 嵌套获取非重入 Agent.runMaintenance。修复仅限 export 协调：不重取宿主锁，保留授权、cold-child ensure、canonical/注来源、原子快照、前后 idle/身份及 source/revision 稳定性；restore 的锁与 proof 没有拆除。

@@ -44,6 +44,8 @@ plugin-only `exportState/preflightRestore/restoreState/contentRevision` 使用 s
 
 preflight 仅检查结构、依赖与冲突。Story Kit 先导入并冷验证 exact-ID Session，再调用 restoreState。恢复通过 owner reader 核验实际 assistant anchors、全部原始/采用 revision 和 note 来源，之后按 expectedRevision 一次原子写入。restoreId 同 payload 幂等，不同 payload 或已有非本次恢复状态拒绝。插件 DTO 不生成已接受历史，不复制提供方凭据，不提供独立事件映射。
 
+preflight 对已存在的 Session 比较经过同一严格 schema 验证及既有默认值正规化后的完整 row；相等时支持，真实字段变化仍冲突，不只比较当前公开投影，也不忽略内部 note proof 字段。owner 全局 revision 与对象键顺序不属于 row 内容。此只读检查不授予覆写权：新 restoreId 仍拒绝已有 row；同 job replay 只返回已记结果，不重新导入或覆盖恢复后的 owner 编辑。
+
 冷 child 导出先按父子顺序完成与普通读取相同的惰性继承，再捕获 Context row；保留有效因果 plan 前缀，不把父后续 plan 展平。恢复 consumed 作者注还要求完整 canonical log 中真正成功的 finishing rp_present，以及已恢复 Last Step material 中相同的 note id/version/claimId，并且能无歧义地推导唯一 finishing ID。缺依赖返回 RESTORE_REQUIREMENT_MISSING，伪造、歧义 lineage 或不匹配快照返回 RESTORE_PAYLOAD_INVALID，均在原子写之前停止；普通接受缺失/歧义证据返回 PRESENTATION_NOT_ACCEPTED。合法旧消费可留作审计；当前状态及下一次 capture 还检查实际活动呈现，单独保留 assistant anchor 或存在其他不匹配的成功 receipt，都不会让已回退结果继续消费作者注。同 restoreId 改 payload 或 Session 集合返回 RESTORE_ID_CONFLICT。
 
 严格接受或恢复验证后，内部 noteClaim 保存派生的 outcomePresentationId；普通读取使用本地 canonical parser 检查该结果是否仍有效，不重复依赖可选 Last Step material。卸载插件本身不会撤销既有消费或重新投递注。旧记录没有这个关联且有多个候选、暂时无法取证时，仅保留原账面状态为内部未复核；不挑选任意 finisher，不误置 pending，也不锁 owner。证明服务恢复后重验并缓存唯一 ID；结果确实撤除时仍按 R5 回 pending。此兼容不用于新接受或新恢复的证明。

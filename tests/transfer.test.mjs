@@ -19,7 +19,7 @@ async function fixture(t, withSession = true) {
   const ctx = { on: () => () => {}, get: () => undefined, agents: { list: () => [], get: () => undefined }, connection: { browserPeer: { id: 'owner' } }, typertGateway: { stream: async input => ({ async *[Symbol.asyncIterator]() { const id = input.args.request.address.sessionId; if (sessions.has(id)) yield { type: 'snapshot', header: headers.get(id) ?? { id }, cursor: sessions.get(id).at(-1)?.seq ?? 0, hasMore: false, records: sessions.get(id) }; } }) } };
   const service = await createContextHost(ctx, { store, callModel: () => { throw Error('Transfer cannot call models'); } });
   t.after(async () => { await service.close(); await rm(directory, { recursive: true, force: true }); });
-  return { store, service, sessions, headers, ctx };
+  return { store, service, sessions, headers, ctx, directory };
 }
 
 test('Context transfer is scoped, exact and idempotent, and requires real canonical sessions before restore', async t => {
@@ -48,7 +48,54 @@ test('Context transfer is scoped, exact and idempotent, and requires real canoni
   await assert.rejects(destination.service.restoreState({ restoreId: 'restore', sessionIds: ['story'], state: changed, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
   const otherState = structuredClone(state);otherState.payload.sessions[0].sessionId = 'other-story';destination.sessions.set('other-story', events());
   await assert.rejects(destination.service.restoreState({ restoreId: 'restore', sessionIds: ['other-story'], state: otherState, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
-  assert.equal((await destination.service.preflightRestore({ sessionIds: ['story'], state })).conflicts[0].code, 'RESTORE_ID_CONFLICT');
+  assert.deepEqual(await destination.service.preflightRestore({ sessionIds: ['story'], state }), { supported: true, conflicts: [], requirements: [] });
+});
+
+test('preflight accepts identical restored rows before and after reopening the persisted store', async t => {
+  const source = await fixture(t), destination = await fixture(t);
+  await source.store.configure('story', { settings: { recentTurns: 2 }, expectedRevision: 0 });
+  await source.store.savePlan('story', { anchor: 'anchor', representations: { [revisionId]: { mode: 'index' } }, unresolved: ['Keep this question'], expectedRevision: 1 });
+  await source.store.cacheSummaries('story', { summaries: [{ id: revisionId, summary: 'Saved accepted prose' }], expectedRevision: 2 });
+  await source.store.setAuthorNote('story', { text: 'Saved owner direction', expectedRevision: 3 });
+  const state = await source.service.exportState({ sessionIds: ['story'] });
+  const restored = await destination.service.restoreState({ restoreId: 'same-snapshot', sessionIds: ['story'], state, expectedRevision: 0 });
+  const expected = { supported: true, conflicts: [], requirements: [] };
+  assert.deepEqual(await destination.service.preflightRestore({ sessionIds: ['story'], state }), expected);
+  const reopened = await createContextStore({ directory: destination.directory });
+  assert.deepEqual(await reopened.preflightRestore(['story'], state), expected);
+  const normalized = structuredClone(state);normalized.revision += 100;
+  delete normalized.payload.sessions[0].state.settings.maxChars;
+  normalized.payload.sessions[0].state = Object.fromEntries(Object.entries(normalized.payload.sessions[0].state).reverse());
+  assert.deepEqual(await reopened.preflightRestore(['story'], normalized), expected);
+  assert.deepEqual(await reopened.contentRevision(), { revision: restored.revision });
+});
+
+test('preflight detects complete stored-row differences and same-job replay never overwrites later owner changes', async t => {
+  const source = await fixture(t);
+  await source.store.setAuthorNote('story', { text: 'Imported direction', expectedRevision: 0 });
+  const state = await source.service.exportState({ sessionIds: ['story'] });
+  const edits = [
+    (store, revision) => store.configure('story', { settings: { recentTurns: 2 }, expectedRevision: revision }),
+    (store, revision) => store.setAuthorNote('story', { text: 'Later owner direction', expectedRevision: revision }),
+    (store, revision) => store.savePlan('story', { anchor: 'anchor', representations: { [revisionId]: { mode: 'index' } }, unresolved: ['Later question'], expectedRevision: revision }),
+    (store, revision) => store.cacheSummaries('story', { summaries: [{ id: revisionId, summary: 'Later summary' }], expectedRevision: revision }),
+  ];
+  for (const edit of edits) {
+    const destination = await fixture(t);
+    const restored = await destination.service.restoreState({ restoreId: 'owned-snapshot', sessionIds: ['story'], state, expectedRevision: 0 });
+    assert.equal((await destination.service.preflightRestore({ sessionIds: ['story'], state })).supported, true);
+    await assert.rejects(destination.service.restoreState({ restoreId: 'new-job-same-content', sessionIds: ['story'], state, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
+    await edit(destination.store, restored.revision);
+    const current = await destination.store.exportState(['story']);
+    const conflict = { supported: false, conflicts: [{ code: 'RESTORE_ID_CONFLICT', id: 'story' }], requirements: [] };
+    assert.deepEqual(await destination.service.preflightRestore({ sessionIds: ['story'], state }), conflict);
+    const reopened = await createContextStore({ directory: destination.directory });
+    assert.deepEqual(await reopened.preflightRestore(['story'], state), conflict);
+    assert.deepEqual(await reopened.restoreState({ restoreId: 'owned-snapshot', sessionIds: ['story'], state, expectedRevision: current.revision }), restored);
+    assert.deepEqual(await reopened.exportState(['story']), current);
+    await assert.rejects(reopened.restoreState({ restoreId: 'different-job', sessionIds: ['story'], state, expectedRevision: current.revision }), { code: 'RESTORE_ID_CONFLICT' });
+    assert.deepEqual(await reopened.exportState(['story']), current);
+  }
 });
 
 test('restore validates canonical source anchors and rejects unknown payload fields without any write', async t => {
