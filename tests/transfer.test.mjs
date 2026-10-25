@@ -130,7 +130,7 @@ test('accepted note audit survives restore but a result rewound off the active s
   assert.equal(current.history.length, 0);assert.equal(current.authorNote.status, 'pending');
   assert.equal((await destination.store.exportState(['story'])).payload.sessions[0].state.noteClaims['initial-claim'].status, 'consumed');
   destination.sessions.set('story', [...ambiguousPresentations(), { seq: 6, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { id: 'remove-first-result', source: { kind: 'runtime-context' }, content: [] } }]);
-  destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => ({ presentationId: input.presentationId, contextPreparation: { authorNote: input.presentationId === 'presentation' ? proof : { ...proof, id: 'unrelated-note' } } }) } : undefined;
+  destination.ctx.get = () => undefined;
   const withSibling = await destination.service.state({ sessionId: 'story' });
   assert.equal(withSibling.history.length, 1);assert.equal(withSibling.authorNote.status, 'pending');
   destination.sessions.set('child', destination.sessions.get('story'));destination.headers.set('child', { id: 'child', parentSession: 'story' });
@@ -156,4 +156,104 @@ test('ambiguous canonical finishing candidates cannot choose an arbitrary frozen
   destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => ({ presentationId: input.presentationId, contextPreparation: { authorNote: { id: captured.authorNote.id, version: captured.authorNote.version, claimId: 'initial-claim' } } }) } : undefined;
   await assert.rejects(destination.service.presentationOutcome({ sessionId: 'story', presentationId: 'presentation', claimId: 'initial-claim', status: 'accepted' }), { code: 'PRESENTATION_NOT_ACCEPTED' });
   assert.equal((await destination.store.contentRevision()).revision, captured.revision);
+});
+
+test('unloading optional LastStep preserves validated consumption and leaves owner replacement reset and disable usable', async t => {
+  const { state, proof } = await consumedState(t), destination = await fixture(t);
+  let materialReads = 0;
+  destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => { materialReads++;return { presentationId: input.presentationId, contextPreparation: { authorNote: proof } }; } } : undefined;
+  const restored = await destination.service.restoreState({ restoreId: 'optional-proof', sessionIds: ['story'], state, expectedRevision: 0 });
+  const readsBeforeUnload = materialReads;destination.ctx.get = () => undefined;
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  assert.equal((await destination.service.authorNote({ sessionId: 'story' })).status, 'consumed');
+  const unrelated = await destination.store.capturePreparation('story', { presentationId: 'unrelated', anchor: 'anchor', activeAnchors: ['anchor'], activePresentationAnchors: ['anchor'] });
+  assert.equal(unrelated.authorNote, null);
+  destination.ctx.get = name => name === 'rpLastStep' ? { narratives: async () => { throw Error('Optional narrative service unavailable'); }, material: async () => { materialReads++;throw Error('Old proof must not be requested'); } } : undefined;
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  destination.ctx.get = () => undefined;
+  destination.sessions.set('story', [...events(), { seq: 4, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { id: 'result-only-rewind', source: { kind: 'runtime-context' }, content: [] } }]);
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'pending');
+  destination.sessions.set('story', events());
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  const disabled = await destination.service.configure({ sessionId: 'story', settings: { enabled: false }, expectedRevision: restored.revision });
+  assert.equal(disabled.settings.enabled, false);
+  const replaced = await destination.service.setAuthorNote({ sessionId: 'story', text: 'New independent owner note', expectedRevision: disabled.revision });
+  assert.equal(replaced.note.status, 'pending');assert.equal(replaced.note.version, proof.version + 1);
+  await assert.rejects(destination.service.setAuthorNote({ sessionId: 'story', text: 'Stale edit', expectedRevision: disabled.revision }), { code: 'REVISION_CONFLICT' });
+  const reset = await destination.service.setAuthorNote({ sessionId: 'story', text: '', expectedRevision: replaced.revision });
+  assert.equal(reset.note, null);assert.equal((await destination.service.state({ sessionId: 'story' })).settings.enabled, false);
+  await assert.rejects(destination.service.setAuthorNote({ sessionId: 'story', text: {}, expectedRevision: reset.revision }), { code: 'INVALID_AUTHOR_NOTE' });
+  await assert.rejects(destination.service.configure({ sessionId: 'story', settings: { enabled: false, unknown: true }, expectedRevision: reset.revision }), { code: 'INVALID_SETTINGS' });
+  assert.equal(materialReads, readsBeforeUnload);
+  const stored = await destination.store.exportState(['story']);assert.equal(stored.payload.sessions[0].state.noteClaims['initial-claim'].status, 'consumed');
+  await assert.rejects(destination.service.configure({ sessionId: 'missing', settings: { enabled: false }, expectedRevision: reset.revision }), { code: 'SESSION_NOT_FOUND' });
+  const fresh = await fixture(t);await fresh.store.setAuthorNote('story', { text: 'A new claim still needs proof', expectedRevision: 0 });
+  const captured = await fresh.store.capturePreparation('story', { presentationId: 'initial-claim', anchor: 'anchor' });
+  await assert.rejects(fresh.service.presentationOutcome({ sessionId: 'story', presentationId: 'presentation', claimId: 'initial-claim', status: 'accepted' }), { code: 'PRESENTATION_NOT_ACCEPTED' });
+  assert.equal((await fresh.store.contentRevision()).revision, captured.revision);
+});
+
+test('restore journal identity precedes deeper schema logs and proof and completed replay ignores expectedRevision changes', async t => {
+  const { state, proof } = await consumedState(t), destination = await fixture(t);
+  destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => ({ presentationId: input.presentationId, contextPreparation: { authorNote: proof } }) } : undefined;
+  const restored = await destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['story'], state, expectedRevision: 0 });
+  let lookups = 0;destination.ctx.typertGateway.stream = async () => { lookups++;throw Error('No dependency lookup should happen'); };destination.ctx.get = () => { lookups++;throw Error('No material lookup should happen'); };
+  const changed = structuredClone(state);changed.payload.sessions[0].state.authorNote.version = 2;changed.payload.sessions[0].state.authorNoteVersion = 2;changed.payload.sessions[0].state.noteClaims['initial-claim'].note.version = 2;
+  await assert.rejects(destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['story'], state: changed, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
+  const changedSession = structuredClone(state);changedSession.payload.sessions[0].sessionId = 'not-imported';
+  await assert.rejects(destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['not-imported'], state: changedSession, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
+  const changedSchema = structuredClone(state);changedSchema.payload.sessions[0].state.authorNote.version = 0;
+  await assert.rejects(destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['story'], state: changedSchema, expectedRevision: restored.revision }), { code: 'RESTORE_ID_CONFLICT' });
+  assert.deepEqual(await destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['story'], state, expectedRevision: 999 }), restored);
+  await assert.rejects(destination.service.restoreState({ restoreId: 'identity-first', sessionIds: ['story'], state, expectedRevision: -1 }), { code: 'RESTORE_PAYLOAD_INVALID' });
+  assert.equal(lookups, 0);assert.equal((await destination.store.contentRevision()).revision, restored.revision);
+});
+
+test('competing restore payloads serialize identity through proof and merge instead of racing dependency validation', async t => {
+  const { state, proof } = await consumedState(t), destination = await fixture(t);
+  let release, started, reads = 0;
+  const gate = new Promise(resolve => release = resolve), ready = new Promise(resolve => started = resolve);
+  destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => { reads++;started();await gate;return { presentationId: input.presentationId, contextPreparation: { authorNote: proof } }; } } : undefined;
+  const first = destination.service.restoreState({ restoreId: 'one-identity', sessionIds: ['story'], state, expectedRevision: 0 });
+  await ready;
+  const changed = structuredClone(state);changed.payload.sessions[0].state.authorNote.version = 2;changed.payload.sessions[0].state.authorNoteVersion = 2;changed.payload.sessions[0].state.noteClaims['initial-claim'].note.version = 2;
+  const second = destination.service.restoreState({ restoreId: 'one-identity', sessionIds: ['story'], state: changed, expectedRevision: 0 });
+  const rejected = assert.rejects(second, { code: 'RESTORE_ID_CONFLICT' });
+  await new Promise(resolve => setImmediate(resolve));assert.equal(reads, 1);
+  release();const result = await first;await rejected;
+  assert.equal((await destination.store.contentRevision()).revision, result.revision);assert.equal(reads, 1);
+});
+
+test('a previously validated legacy local outcome with one canonical finisher remains consumed without optional proof service', async t => {
+  const { state } = await consumedState(t), destination = await fixture(t);
+  delete state.payload.sessions[0].state.noteClaims['initial-claim'].outcomePresentationId;
+  // Bootstrap an existing trusted local row from the prior release, not the public restore entry point.
+  await destination.store.restoreState({ restoreId: 'legacy-local-row', sessionIds: ['story'], state, expectedRevision: 0 });
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  destination.sessions.set('story', [...events(), { seq: 4, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { id: 'remove-legacy-result', source: { kind: 'runtime-context' }, content: [] } }]);
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'pending');
+});
+
+test('legacy ambiguous local bookkeeping stays unverified without LastStep and caches only a later strict finisher proof', async t => {
+  const { state, proof } = await consumedState(t), destination = await fixture(t);
+  delete state.payload.sessions[0].state.noteClaims['initial-claim'].outcomePresentationId;
+  await destination.store.restoreState({ restoreId: 'legacy-ambiguous-local-row', sessionIds: ['story'], state, expectedRevision: 0 });
+  destination.sessions.set('story', ambiguousPresentations());
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  assert.equal((await destination.store.authorNoteClaims('story'))['initial-claim'].outcomePresentationId, undefined);
+  const records = [...ambiguousPresentations(), { seq: 6, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { id: 'remove-possible-finisher', source: { kind: 'runtime-context' }, content: [] } }];
+  destination.sessions.set('story', records);
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
+  let reads = 0;
+  destination.ctx.get = name => name === 'rpLastStep' ? { material: async input => { reads++;return { presentationId: input.presentationId, contextPreparation: { authorNote: input.presentationId === 'presentation' ? proof : { ...proof, id: 'unrelated-note' } } }; } } : undefined;
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'pending');
+  assert.equal((await destination.store.authorNoteClaims('story'))['initial-claim'].outcomePresentationId, 'presentation');
+  const checkedReads = reads;destination.ctx.get = () => undefined;destination.sessions.set('story', ambiguousPresentations());
+  assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');assert.equal(reads, checkedReads);
+  const revision = (await destination.store.contentRevision()).revision;
+  assert.equal((await destination.service.setAuthorNote({ sessionId: 'story', text: 'New owner choice', expectedRevision: revision })).note.status, 'pending');
+  const allGone = await fixture(t);
+  await allGone.store.restoreState({ restoreId: 'legacy-all-results-gone', sessionIds: ['story'], state, expectedRevision: 0 });
+  allGone.sessions.set('story', [...ambiguousPresentations(), { seq: 6, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 5 }, data: { id: 'remove-all-possible-results', source: { kind: 'runtime-context' }, content: [] } }]);
+  assert.equal((await allGone.service.state({ sessionId: 'story' })).authorNote.status, 'pending');
 });

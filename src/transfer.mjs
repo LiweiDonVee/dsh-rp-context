@@ -13,6 +13,17 @@ export function transferSessionIds(values) {
   if (!Array.isArray(values) || !values.length || values.some(value => !id(value)) || new Set(values).size !== values.length) invalid();
   return [...values].sort();
 }
+export function validateRestoreEnvelope({ restoreId, sessionIds, state, expectedRevision }) {
+  try {
+    const ids = transferSessionIds(sessionIds);
+    if (!id(restoreId) || !integer(expectedRevision) || !object(state) || !integer(state.schemaVersion) || state.schemaVersion < 1 || !integer(state.revision) || !object(state.payload)) invalid();
+    const serialized = JSON.stringify(state, (_key, value) => {
+      if (value === undefined || ['function', 'symbol', 'bigint'].includes(typeof value) || typeof value === 'number' && !Number.isFinite(value)) invalid();
+      return value;
+    });
+    return { restoreId, sessionIds: ids, state: JSON.parse(serialized), expectedRevision };
+  } catch (error) { if (error.code === 'RESTORE_PAYLOAD_INVALID') throw error;invalid(); }
+}
 function representations(value) {
   if (!object(value)) invalid();
   for (const [key, item] of Object.entries(value)) {
@@ -38,8 +49,8 @@ function sessionState(value) {
   if (!integer(value.authorNoteVersion) || !object(value.noteClaims)) invalid();
   if (value.authorNote && value.authorNote.version > value.authorNoteVersion) invalid();
   for (const [claimId, claim] of Object.entries(value.noteClaims)) {
-    exact(claim, ['note', 'status', 'anchor', 'outcomeAnchor', 'order']);note(claim.note);
-    if (!id(claimId) || !claim.note || claim.note.claimedBy !== claimId || claim.note.version > value.authorNoteVersion || !['claimed', 'released', 'consumed'].includes(claim.status) || !id(claim.anchor) || !integer(claim.order) || claim.status === 'consumed' && !id(claim.outcomeAnchor) || claim.outcomeAnchor !== undefined && !id(claim.outcomeAnchor)) invalid();
+    exact(claim, ['note', 'status', 'anchor', 'outcomeAnchor', 'outcomePresentationId', 'order']);note(claim.note);
+    if (!id(claimId) || !claim.note || claim.note.claimedBy !== claimId || claim.note.version > value.authorNoteVersion || !['claimed', 'released', 'consumed'].includes(claim.status) || !id(claim.anchor) || !integer(claim.order) || claim.status === 'consumed' && !id(claim.outcomeAnchor) || claim.outcomeAnchor !== undefined && !id(claim.outcomeAnchor) || claim.outcomePresentationId !== undefined && !id(claim.outcomePresentationId)) invalid();
   }
 }
 export function validateTransferState(state, sessionIds) {
@@ -67,7 +78,7 @@ export function canonicalContextState(state, view, { prune = false } = {}) {
   copy.plans = copy.plans.filter(plan => { if (anchors.has(plan.anchor)) return true;if (!prune) invalid();return false; }).map(plan => ({ ...plan, representations: filterRefs(plan.representations) }));
   copy.summaries = filterRefs(copy.summaries);
   copy.noteClaims = Object.fromEntries(Object.entries(copy.noteClaims ?? {}).filter(([, claim]) => {
-    if (anchors.has(claim.anchor) && (claim.outcomeAnchor === undefined || anchors.has(claim.outcomeAnchor)) && (claim.status !== 'consumed' || history.some(record => record.anchor === claim.outcomeAnchor))) return true;if (!prune) invalid();return false;
+    if (anchors.has(claim.anchor) && (claim.outcomeAnchor === undefined || anchors.has(claim.outcomeAnchor)) && (claim.status !== 'consumed' || history.some(record => record.anchor === claim.outcomeAnchor && (claim.outcomePresentationId === undefined || record.source.presentationId === claim.outcomePresentationId)))) return true;if (!prune) invalid();return false;
   }));
   return copy;
 }

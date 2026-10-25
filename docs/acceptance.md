@@ -1,5 +1,13 @@
 # Context 验收记录
 
+## C-A fix round 2 — optional owner 控制与 restore 顺序
+
+在 `abfcddf` 上修复复核发现的 owner 控制阻塞，并对齐 R18/R19/T9。最初两项 RED 分别复现缺 LS 的 state 报错，以及 reused restoreId 先查依赖返回错误码；旧歧义数据的 R19 RED 另证实不能因缺服务误置 pending。最终完整检查为 62 host +19 UI。
+
+最终 0.2.0 包 SHA256：`486095a318fa273517a27c0f15b2beea7123751cc51dfe80bfc7e368fdcaef4c`。该包独立 rc.3 native smoke 通过，仍为合成 rp_present、无真实 DB/LS 联用；共享读取/投影变动后的原生采用、摘要、注独占、blocked turn 与同 home 冷重启保持。
+
+定向覆盖：已验证 consumed 在 LS 移除后保留，state/authorNote 可读，新注/reset/关闭 Context 可用，授权、DTO 与陈旧 revision 仍拒绝；新接受和新恢复缺 proof 仍拒绝。内部 finishing 关联只在严格验证后写入，旧多候选账面状态先保留，证明恢复后才缓存；真实 result-only 回退仍 pending。恢复同 ID 改合法 note version/缺失 Session 集合先 ID_CONFLICT，completed replay 不查依赖，两个并发 payload 串行绑定身份。无公共 AuthorNote/status 扩展。
+
 ## C-A fix round 1 — transfer 定点修复
 
 在初始 C-A 的 `252115c` 上修复冷 child 导出继承与 consumed restore 双证，并对齐 R15/T5。缺陷及歧义先复现 RED，再通过 focused GREEN；完整检查为 57 host +19 UI。新包 SHA256：`d05ebe89d41a4f055c0ef7dbab6e01feeda423d1a5599f6e116903bea3ce7d6b`。

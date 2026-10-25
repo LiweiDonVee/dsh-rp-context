@@ -45,7 +45,11 @@ export async function createContextHost(ctx,options={}){
   }
   async function current(input,signal){
     const view=await viewFor(input,signal);await ensure(view)
-    const reader=ctx.get?.('rpLastStep'),records=typeof reader?.narratives==='function'?(await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records.map(record=>({...record,anchor:record.ref?.assistantMessageId,source:record.ref})):narrativeHistory(view)
+    const reader=ctx.get?.('rpLastStep');let records
+    if(typeof reader?.narratives==='function'){
+      try{records=(await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records.map(record=>({...record,anchor:record.ref?.assistantMessageId,source:record.ref}))}
+      catch(error){if(signal?.aborted)throw error;records=narrativeHistory(view)}
+    }else records=narrativeHistory(view)
     buildHistory(records)
     const projected=await noteProjection(input.sessionId,view,signal,records)
     const state=projectHistoryState(records,projected.state)
@@ -94,7 +98,7 @@ export async function createContextHost(ctx,options={}){
       const proof=material?.contextPreparation?.authorNote
       if(material?.presentationId===presentationId&&proof?.id===claim.note.id&&proof?.version===claim.note.version&&proof?.claimId===claimId)matches.push(presentationId)
     }
-    if(matches.length!==1)invalid()
+    if(matches.length!==1||claim.outcomePresentationId!==undefined&&claim.outcomePresentationId!==matches[0])invalid()
     return{presentationId:matches[0],active:narrativeHistory(view).some(record=>record.source.presentationId===matches[0])}
   }
   async function noteProjection(sessionId,view,signal,records=narrativeHistory(view)){
@@ -102,13 +106,28 @@ export async function createContextHost(ctx,options={}){
     let state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})
     if(state.authorNote?.status==='consumed'){
       const claimId=state.authorNote.claimedBy,claims=await store.authorNoteClaims(sessionId),claim=claims[claimId]
-      const evidence=await noteEvidence(view,claimId,claim,signal)
-      if(!evidence.active){activePresentationAnchors=activePresentationAnchors.filter(anchor=>anchor!==claim.outcomeAnchor);state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})}
+      const history=narrativeHistory(view,{includeInactive:true}),finishing=[...new Set(history.filter(record=>record.anchor===claim.outcomeAnchor).map(record=>record.source.presentationId))]
+      let presentationId=claim.outcomePresentationId
+      if(presentationId===undefined){
+        if(typeof ctx.get?.('rpLastStep')?.material==='function'){
+          let evidence
+          try{evidence=await noteEvidence(view,claimId,claim,signal)}catch(error){if(signal?.aborted)throw error;/* Legacy local bookkeeping stays unverified until its optional proof is available. */}
+          if(evidence){
+            await store.cacheAuthorNoteOutcome(sessionId,{claimId,noteId:claim.note.id,version:claim.note.version,outcomeAnchor:claim.outcomeAnchor,presentationId:evidence.presentationId})
+            state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})
+            presentationId=(await store.authorNoteClaims(sessionId))[claimId]?.outcomePresentationId??evidence.presentationId
+          }
+        }
+        if(presentationId===undefined&&finishing.length===1)presentationId=finishing[0]
+        if(presentationId===undefined&&finishing.length>1)return{state,activePresentationAnchors}
+      }
+      const active=presentationId!==undefined&&narrativeHistory(view).some(record=>record.anchor===claim.outcomeAnchor&&record.source.presentationId===presentationId)
+      if(!active){activePresentationAnchors=activePresentationAnchors.filter(anchor=>anchor!==claim.outcomeAnchor);state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})}
     }
     return{state,activePresentationAnchors}
   }
   async function restoredNoteEvidence(state,view,signal){
-    for(const[claimId,claim]of Object.entries(state.noteClaims??{}))if(claim.status==='consumed')await noteEvidence(view,claimId,claim,signal,true)
+    for(const[claimId,claim]of Object.entries(state.noteClaims??{}))if(claim.status==='consumed'){const evidence=await noteEvidence(view,claimId,claim,signal,true);claim.outcomePresentationId=evidence.presentationId}
   }
   const service={
     contentRevision:(input={})=>run(input.signal,()=>store.contentRevision()),
@@ -127,23 +146,21 @@ export async function createContextHost(ctx,options={}){
     }),
     preflightRestore:input=>run(input.signal,()=>store.preflightRestore(input.sessionIds,input.state)),
     restoreState:input=>run(input.signal,async signal=>{
-      const state=validateTransferState(input.state,input.sessionIds),ids=transferSessionIds(input.sessionIds)
-      return idleSessions(ids,async()=>{
+      const result=await store.restoreState({...input,signal,validateSources:(state,ids)=>idleSessions(ids,async()=>{
         for(const item of state.payload.sessions){
           let view
           try{view=await readOwner(item.sessionId,signal)}catch(error){if(signal.aborted)throw error;throw new ContextError('RESTORE_REQUIREMENT_MISSING','Import and validate the exact canonical session before restoring Context',409)}
           canonicalContextState(item.state,view)
           await restoredNoteEvidence(item.state,view,signal)
         }
-        const result=await store.restoreState({...input,state,signal})
-        for(const id of result.restoredSessionIds){known.add(id);notify(id)}
-        return result
-      },'RESTORE_REQUIREMENT_MISSING')
+      },'RESTORE_REQUIREMENT_MISSING')})
+      for(const id of result.restoredSessionIds){known.add(id);notify(id)}
+      return result
     }),
     state:input=>run(input.signal,async signal=>{const{state,history}=await current(input,signal);const representations=Object.fromEntries(Object.entries(state.representations).filter(([id])=>history.some(record=>record.id===id)));return{...state,representations,history:buildHistory(history,{recentTurns:state.settings.recentTurns,representations}),scope:'preparation-and-writer'}}),
-    configure:input=>run(input.signal,async signal=>{await current(input,signal);const result=await store.configure(input.sessionId,input);notify(input.sessionId);return result}),
+    configure:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.configure(input.sessionId,input);notify(input.sessionId);return result}),
     authorNote:input=>run(input.signal,async signal=>(await current(input,signal)).state.authorNote??null),
-    setAuthorNote:input=>run(input.signal,async signal=>{await current(input,signal);const result=await store.setAuthorNote(input.sessionId,input);notify(input.sessionId);return result}),
+    setAuthorNote:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.setAuthorNote(input.sessionId,input);notify(input.sessionId);return result}),
     presentationOutcome:input=>run(input.signal,async signal=>{
       const{history,view}=await current(input,signal)
       const accepted=history.find(record=>record.source.presentationId===input.presentationId)

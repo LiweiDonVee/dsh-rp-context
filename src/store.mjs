@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { ContextError, validateSettings } from './core.mjs';
-import { transferSessionIds, validateTransferState, transferFingerprint } from './transfer.mjs';
+import { transferSessionIds, validateRestoreEnvelope, validateTransferState, transferFingerprint } from './transfer.mjs';
 
 const queues = new Map();
 const fail = (code, message, status) => { throw new ContextError(code, message, status); };
@@ -112,9 +112,9 @@ export async function createContextStore({ directory }) {
         }
       });
     },
-    restoreState({ restoreId, sessionIds, state: input, expectedRevision, signal }) {
-      identifier(restoreId);
-      const transfer = validateTransferState(input, sessionIds), fingerprint = transferFingerprint({ sessionIds: transferSessionIds(sessionIds), state: transfer });
+    restoreState({ restoreId, sessionIds, state: input, expectedRevision, signal, validateSources }) {
+      const envelope = validateRestoreEnvelope({ restoreId, sessionIds, state: input, expectedRevision });
+      const fingerprint = transferFingerprint({ sessionIds: envelope.sessionIds, state: envelope.state });
       return serial(async () => {
         signal?.throwIfAborted();
         const state = await readState(), journalKey = key(restoreId), previous = state.restores?.[journalKey];
@@ -122,11 +122,13 @@ export async function createContextStore({ directory }) {
           if (previous.fingerprint !== fingerprint) fail('RESTORE_ID_CONFLICT', 'Restore ID already owns a different Context payload or session set', 409);
           return structuredClone(previous.result);
         }
-        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail('INVALID_REVISION', 'An explicit expectedRevision is required');
+        const transfer = validateTransferState(envelope.state, envelope.sessionIds);
         if (state.revision !== expectedRevision) fail('REVISION_CONFLICT', 'Context changed; retry the restore explicitly', 409);
         for (const item of transfer.payload.sessions) if (Object.hasOwn(state.sessions, key(item.sessionId))) fail('RESTORE_ID_CONFLICT', 'Context state already exists for a restored session', 409);
+        await validateSources?.(transfer, envelope.sessionIds);
+        signal?.throwIfAborted();
         for (const item of transfer.payload.sessions) state.sessions[key(item.sessionId)] = structuredClone(item.state);
-        const result = { revision: state.revision + 1, restoredSessionIds: transferSessionIds(sessionIds) };
+        const result = { revision: state.revision + 1, restoredSessionIds: envelope.sessionIds };
         (state.restores ??= {})[journalKey] = { fingerprint, result };
         state.revision++;
         signal?.throwIfAborted();await persist(state);
@@ -168,6 +170,16 @@ export async function createContextStore({ directory }) {
     authorNoteClaims(sessionId) {
       return serial(async () => structuredClone(session(await readState(), sessionId).noteClaims ?? {}));
     },
+    cacheAuthorNoteOutcome(sessionId, { claimId, noteId, version, outcomeAnchor, presentationId }) {
+      identifier(claimId);identifier(presentationId);
+      return serial(async () => {
+        const state = await readState(), claims = session(state, sessionId).noteClaims ?? {}, claim = Object.hasOwn(claims, claimId) ? claims[claimId] : undefined;
+        if (claim?.status !== 'consumed' || claim.note.id !== noteId || claim.note.version !== version || claim.outcomeAnchor !== outcomeAnchor || claim.outcomePresentationId !== undefined) return { revision: state.revision };
+        claim.outcomePresentationId = presentationId;state.revision++;
+        await persist(state);
+        return { revision: state.revision };
+      });
+    },
     capturePreparation(sessionId, { presentationId, anchor, activeAnchors, activePresentationAnchors } = {}) {
       identifier(presentationId);identifier(anchor);
       return serial(async () => {
@@ -195,7 +207,7 @@ export async function createContextStore({ directory }) {
         const next = status === 'accepted' ? 'consumed' : status === 'failed-before-freeze' ? 'released' : 'claimed';
         if (claim && claim.status !== 'consumed' && next !== 'claimed' && claim.status !== next) {
           claim.status = next;
-          if (next === 'consumed') claim.outcomeAnchor = anchor;
+          if (next === 'consumed') { claim.outcomeAnchor = anchor;claim.outcomePresentationId = presentationId; }
           if (record.authorNote?.id === claim.note.id && record.authorNote.version === claim.note.version) {
             record.authorNote = { ...claim.note, status: next === 'consumed' ? 'consumed' : 'pending' };
             if (next === 'released') delete record.authorNote.claimedBy;
