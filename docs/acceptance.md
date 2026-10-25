@@ -1,5 +1,16 @@
 # Context 验收记录
 
+## C-B 基础包真实联用 checkpoint
+
+实际安装已验收 Database0.2 DB-A、LastStep0.3 LS-A、Context0.2 C-A tgz，在独立官方 rc.3 home 中通过真实插件/SDK 运行。Context 安装包仍为 `486095a318fa273517a27c0f15b2beea7123751cc51dfe80bfc7e368fdcaef4c`，本轮只有测试脚本/fixture/文档和脚本入口变化，没有修改生产逻辑。
+
+- 实际 materialAccess v2 的双来源同 ID、required union、disabled 排除、受保护事实混合批次拒绝、候选外读取通过；真实本地 HTTP embedding/rerank 各 8 次，禁用正文未进入请求，原始 BOM/CRLF 与源哈希不变。
+- 实际 LS rp_present→Context.prepare→模块读取/编译→writer→canonical 接受和作者注双证通过。编译前失败释放注；编译后失败保留旧 claim；owner 新版本不被旧 rewriteOf 消费，后续 overlay 不改旧快照，重复 retry 被拒绝。
+- 请求累计：main 13、Context prepare 20、summary 1、assemble 8、writer 4；synthetic 工作条目工具 4。canonical 真实 rp_present 调用 6、成功 result 3。有效 retry 的 main dispatch +1、writer +1，prepare/assemble/工作工具不增，不能把 dispatch 说成零调用。
+- 当前窗口只影响独立材料：较早正式正文已摘要，但实际 main 输入仍含原文。公开 Session prefix fork 正确读取 Database/Context 因果前缀和 LastStep canonical narratives；进程真实退出/重启后事件前缀相等，没有历史模型/工具重放。实际 owner 材料面板无 pageErrors。
+
+所有执行中的模型均为显式本地 `context-integration-local/main`；receipt 另记录的 migrate 路由没有被调用。主回合额外工具只是明确标识的允许工作条目更新，未安装生产 GM，也不冒充 GM factual receipt。生产采用后的 summary revision、自动 LS composition 继承及完整 saved-story restore 仍等待 GM-B/LS-B 接口包。详见 [运行说明](native-integration.md)。
+
 ## C-A fix round 2 — optional owner 控制与 restore 顺序
 
 在 `abfcddf` 上修复复核发现的 owner 控制阻塞，并对齐 R18/R19/T9。最初两项 RED 分别复现缺 LS 的 state 报错，以及 reused restoreId 先查依赖返回错误码；旧歧义数据的 R19 RED 另证实不能因缺服务误置 pending。最终完整检查为 62 host +19 UI。
