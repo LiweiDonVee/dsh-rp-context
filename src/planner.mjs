@@ -71,7 +71,8 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
         // Validate all host references before issuing a model or database call.
         buildHistory(sourceHistory);
         const activeAnchors = [...new Set([...(input.activeAnchors ?? sourceHistory.map(item => item.anchor)), anchor])];
-        let view = projectHistoryState(sourceHistory, input.presentationId === undefined ? await store.view(sessionId, { activeAnchors }) : await store.capturePreparation(sessionId, { presentationId: input.presentationId, anchor, activeAnchors }));
+        const activePresentationAnchors = input.activePresentationAnchors;
+        let view = projectHistoryState(sourceHistory, input.presentationId === undefined ? await store.view(sessionId, { activeAnchors, activePresentationAnchors }) : await store.capturePreparation(sessionId, { presentationId: input.presentationId, anchor, activeAnchors, activePresentationAnchors }));
         authorNote = input.presentationId === undefined ? null : view.authorNote;
         const settings = view.settings;
         if (!settings.enabled) fail('CONTEXT_DISABLED', 'Context preparation is disabled', 409);

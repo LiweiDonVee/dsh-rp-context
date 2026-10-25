@@ -1,5 +1,13 @@
 # Context 验收记录
 
+## C-A fix round 1 — transfer 定点修复
+
+在初始 C-A 的 `252115c` 上修复冷 child 导出继承与 consumed restore 双证，并对齐 R15/T5。缺陷及歧义先复现 RED，再通过 focused GREEN；完整检查为 57 host +19 UI。新包 SHA256：`d05ebe89d41a4f055c0ef7dbab6e01feeda423d1a5599f6e116903bea3ce7d6b`。
+
+回归覆盖真实受控 canonical snapshot 边界中的冷 child 设置/未决/pending 注、因果前缀继续回退；无 rp_present 的 consumed 拒绝、Last Step 服务或 receipt 未恢复时原子拒绝、冻结注 id/version/claimId 不匹配拒绝，以及旧审计结果离开 active surface 后 pending 投影。多个匹配 receipt 在接受与恢复时均拒绝；同 restoreId 改 payload/Session 集合统一拒绝 RESTORE_ID_CONFLICT。未新增 DTO 或修改恢复顺序。
+
+因共享 current/capture/fork 路径变化，对这个新包仅复跑一次既有独立 rc.3 native smoke，结果通过，原生采用/摘要/claimed 注、blocked 维护回合和冷重启证据保持。此 smoke 仍使用合成 rp_present、不安装 Database/LastStep；恢复双证属于定点 service 测试，尚未提升为 C-B 真实依赖联用或跨 home 故事恢复证明。下节保留初始包证据。
+
 ## 0.2.0 C-A checkpoint — 当前 rc.3
 
 2026-10-25，官方 CLI 实测 `0.2.1-rc.3`，Node `v24.15.0`、pnpm `11.9.0`。最终受测 `dsh-rp-context-0.2.0.tgz` 的 SHA256 为 `63f299d8cba9e542b945aed5b2f8dc7d3fc1f841a23c48bfeafd08ce630bc3b6`。

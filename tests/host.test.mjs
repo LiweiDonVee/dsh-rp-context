@@ -150,7 +150,7 @@ test('owner note methods preserve lineage and only canonical accepted outcomes c
     assert.equal((await service.authorNote({sessionId:'s'})).status,'claimed')
     appendNarrative(f,1)
     f.ctx.get=name=>name==='rpLastStep'?{material:async input=>({presentationId:input.presentationId,packet:{},contextPreparation:{...preparation,authorNote:{...preparation.authorNote,version:99}},status:'complete'})}:undefined
-    await assert.rejects(service.presentationOutcome({sessionId:'s',presentationId:'n1',claimId:'pending',status:'accepted'}),{code:'AUTHOR_NOTE_CLAIM_MISMATCH'})
+    await assert.rejects(service.presentationOutcome({sessionId:'s',presentationId:'n1',claimId:'pending',status:'accepted'}),{code:'PRESENTATION_NOT_ACCEPTED'})
     f.ctx.get=name=>name==='rpLastStep'?{material:async input=>({presentationId:input.presentationId,packet:{},contextPreparation:preparation,status:'complete'})}:undefined
     await service.presentationOutcome({sessionId:'s',presentationId:'n1',claimId:'pending',status:'accepted'})
     assert.equal((await service.authorNote({sessionId:'s'})).status,'consumed')

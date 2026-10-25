@@ -30,19 +30,19 @@ function questions(value) {
   return [...value];
 }
 const fresh = () => ({ settings: validateSettings({}), baseline: { representations: {}, unresolved: [] }, plans: [], summaries: {}, authorNote: null, authorNoteVersion: 0, noteClaims: {} });
-function projectAuthorNote(session, active) {
+function projectAuthorNote(session, active, presentations) {
   if (!session.authorNote) return null;
   const note = { ...session.authorNote, status: 'pending' };delete note.claimedBy;
   const claim = Object.values(session.noteClaims ?? {}).filter(item => item.note.id === note.id && item.note.version === note.version && (active === undefined || active.has(item.anchor))).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).at(-1);
-  if (claim?.status === 'claimed' || claim?.status === 'consumed' && (active === undefined || active.has(claim.outcomeAnchor))) {
+  if (claim?.status === 'claimed' || claim?.status === 'consumed' && (active === undefined || active.has(claim.outcomeAnchor)) && (presentations === undefined || presentations.has(claim.outcomeAnchor))) {
     note.status = claim.status;note.claimedBy = claim.note.claimedBy;
   }
   return note;
 }
-function project(session, activeAnchors) {
+function project(session, activeAnchors, activePresentationAnchors) {
   const active = anchors(activeAnchors);
   const selected = session.plans.filter(plan => active === undefined || active.has(plan.anchor)).at(-1) ?? session.baseline;
-  return { settings: session.settings, representations: selected.representations, unresolved: selected.unresolved, summaries: session.summaries, authorNote: projectAuthorNote(session, active) };
+  return { settings: session.settings, representations: selected.representations, unresolved: selected.unresolved, summaries: session.summaries, authorNote: projectAuthorNote(session, active, anchors(activePresentationAnchors)) };
 }
 
 export async function createContextStore({ directory }) {
@@ -119,7 +119,7 @@ export async function createContextStore({ directory }) {
         signal?.throwIfAborted();
         const state = await readState(), journalKey = key(restoreId), previous = state.restores?.[journalKey];
         if (previous) {
-          if (previous.fingerprint !== fingerprint) fail('RESTORE_CONTENT_CONFLICT', 'Restore ID already owns a different Context payload', 409);
+          if (previous.fingerprint !== fingerprint) fail('RESTORE_ID_CONFLICT', 'Restore ID already owns a different Context payload or session set', 409);
           return structuredClone(previous.result);
         }
         if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail('INVALID_REVISION', 'An explicit expectedRevision is required');
@@ -133,10 +133,10 @@ export async function createContextStore({ directory }) {
         return structuredClone(result);
       });
     },
-    view(sessionId, { activeAnchors } = {}) {
+    view(sessionId, { activeAnchors, activePresentationAnchors } = {}) {
       return serial(async () => {
         const state = await readState();
-        return structuredClone({ revision: state.revision, ...project(session(state, sessionId), activeAnchors) });
+        return structuredClone({ revision: state.revision, ...project(session(state, sessionId), activeAnchors, activePresentationAnchors) });
       });
     },
     configure(sessionId, { settings, expectedRevision } = {}) {
@@ -165,12 +165,15 @@ export async function createContextStore({ directory }) {
         return structuredClone(Object.hasOwn(claims, claimId) ? claims[claimId].note : null);
       });
     },
-    capturePreparation(sessionId, { presentationId, anchor, activeAnchors } = {}) {
+    authorNoteClaims(sessionId) {
+      return serial(async () => structuredClone(session(await readState(), sessionId).noteClaims ?? {}));
+    },
+    capturePreparation(sessionId, { presentationId, anchor, activeAnchors, activePresentationAnchors } = {}) {
       identifier(presentationId);identifier(anchor);
       return serial(async () => {
         const state = await readState(), record = session(state, sessionId);
         const claims = record.noteClaims ??= {}, existing = Object.hasOwn(claims, presentationId) ? claims[presentationId] : undefined;
-        const active = anchors(activeAnchors), pending = projectAuthorNote(record, active);
+        const active = anchors(activeAnchors), pending = projectAuthorNote(record, active, anchors(activePresentationAnchors));
         let note = existing?.status === 'claimed' && (active === undefined || active.has(existing.anchor)) ? existing.note : null;
         if (!note && record.settings.enabled && existing?.status !== 'consumed' && pending?.status === 'pending' && (!existing || existing.note.id === pending.id && existing.note.version === pending.version)) {
           note = { ...pending, status: 'claimed', claimedBy: presentationId };
@@ -179,7 +182,7 @@ export async function createContextStore({ directory }) {
           state.revision++;
           await persist(state);
         }
-        return structuredClone({ revision: state.revision, ...project(record, activeAnchors), authorNote: note });
+        return structuredClone({ revision: state.revision, ...project(record, activeAnchors, activePresentationAnchors), authorNote: note });
       });
     },
     presentationOutcome(sessionId, { presentationId, claimId = presentationId, status, anchor } = {}) {
@@ -230,7 +233,7 @@ export async function createContextStore({ directory }) {
         return project(record);
       });
     },
-    forkSession(fromId, toId, { activeAnchors, expectedRevision } = {}) {
+    forkSession(fromId, toId, { activeAnchors, activePresentationAnchors, expectedRevision } = {}) {
       return mutate(expectedRevision, state => {
         const target = key(toId);
         if (fromId === toId || Object.hasOwn(state.sessions, target)) fail('SESSION_EXISTS', 'Fork requires an independent new child session', 409);
@@ -243,7 +246,7 @@ export async function createContextStore({ directory }) {
         child.baseline = structuredClone(parent.baseline);
         child.plans = structuredClone(parent.plans.filter(plan => active === undefined || active.has(plan.anchor)));
         child.summaries = structuredClone(parent.summaries);
-        const pending = projectAuthorNote(parent, active);
+        const pending = projectAuthorNote(parent, active, anchors(activePresentationAnchors));
         if (pending?.status === 'pending') {
           child.authorNote = { id: randomUUID(), text: pending.text, version: 1, status: 'pending' };
           child.authorNoteVersion = 1;

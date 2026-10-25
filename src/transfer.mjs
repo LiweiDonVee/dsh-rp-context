@@ -67,7 +67,7 @@ export function canonicalContextState(state, view, { prune = false } = {}) {
   copy.plans = copy.plans.filter(plan => { if (anchors.has(plan.anchor)) return true;if (!prune) invalid();return false; }).map(plan => ({ ...plan, representations: filterRefs(plan.representations) }));
   copy.summaries = filterRefs(copy.summaries);
   copy.noteClaims = Object.fromEntries(Object.entries(copy.noteClaims ?? {}).filter(([, claim]) => {
-    if (anchors.has(claim.anchor) && (claim.outcomeAnchor === undefined || anchors.has(claim.outcomeAnchor))) return true;if (!prune) invalid();return false;
+    if (anchors.has(claim.anchor) && (claim.outcomeAnchor === undefined || anchors.has(claim.outcomeAnchor)) && (claim.status !== 'consumed' || history.some(record => record.anchor === claim.outcomeAnchor))) return true;if (!prune) invalid();return false;
   }));
   return copy;
 }

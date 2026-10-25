@@ -43,3 +43,5 @@ rpContext.prepare 接收 sessionId、真实 agent、packet、baseModel、signal�
 plugin-only `exportState/preflightRestore/restoreState/contentRevision` 使用 schemaVersion 1 DTO，仅包含请求的 sessions 及其 settings/baseline/plans/summaries/authorNote/authorNoteVersion/noteClaims。导出在空闲 Session 维护锁下读取真实规范日志，并检查事件和 Context revision 前后相等；prefix 外缓存不会导出。
 
 preflight 仅检查结构、依赖与冲突。Story Kit 先导入并冷验证 exact-ID Session，再调用 restoreState。恢复通过 owner reader 核验实际 assistant anchors、全部原始/采用 revision 和 note 来源，之后按 expectedRevision 一次原子写入。restoreId 同 payload 幂等，不同 payload 或已有非本次恢复状态拒绝。插件 DTO 不生成已接受历史，不复制提供方凭据，不提供独立事件映射。
+
+冷 child 导出先按父子顺序完成与普通读取相同的惰性继承，再捕获 Context row；保留有效因果 plan 前缀，不把父后续 plan 展平。恢复 consumed 作者注还要求完整 canonical log 中真正成功的 finishing rp_present，以及已恢复 Last Step material 中相同的 note id/version/claimId，并且能无歧义地推导唯一 finishing ID。缺依赖返回 RESTORE_REQUIREMENT_MISSING，伪造、歧义 lineage 或不匹配快照返回 RESTORE_PAYLOAD_INVALID，均在原子写之前停止；普通接受缺失/歧义证据返回 PRESENTATION_NOT_ACCEPTED。合法旧消费可留作审计；当前状态及下一次 capture 还检查实际活动呈现，单独保留 assistant anchor 或存在其他不匹配的成功 receipt，都不会让已回退结果继续消费作者注。同 restoreId 改 payload 或 Session 集合返回 RESTORE_ID_CONFLICT。
