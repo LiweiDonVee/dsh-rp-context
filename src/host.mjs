@@ -80,7 +80,7 @@ export async function createContextHost(ctx,options={}){
       const representations={...state.representations,[input.historyId]:{mode:input.mode,...input.summary!==undefined?{summary:input.summary}:{}}}
       const filtered=Object.fromEntries(Object.entries(representations).filter(([id])=>history.some(record=>record.id===id)))
       const projected=buildHistory(history,{recentTurns:state.settings.recentTurns,representations:filtered})
-      if(projected.some(record=>record.needsSummary))throw new ContextError('MISSING_SUMMARY','Generate an actual summary before folding this narrative',409)
+      if(projected.find(record=>record.id===input.historyId)?.needsSummary)throw new ContextError('MISSING_SUMMARY','Generate an actual summary before folding this narrative',409)
       const result=await store.savePlan(input.sessionId,{representations:filtered,unresolved:state.unresolved,anchor:view.currentAnchor,expectedRevision:input.expectedRevision});notify(input.sessionId);return result
     }),
     prepare:input=>run(input.signal,async signal=>{
@@ -110,16 +110,16 @@ export async function createContextHost(ctx,options={}){
   ]
   async function attach(agent){
     if(stopped||scopes.has(agent))return
-    await ensure(projectSession({header:agent.session.header??{id:agent.session.id},records:agent.session.snapshotEvents()}));if(stopped)return
     const owned=[];scopes.set(agent,owned)
+    await ensure(projectSession({header:agent.session.header??{id:agent.session.id},records:agent.session.snapshotEvents()}));if(stopped||scopes.get(agent)!==owned)return
     for(const definition of definitions)owned.push(agent.ctx.tools.register({...definition,output:{schema:{type:'object'},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async(args,exec)=>{
       if(!args||typeof args!=='object'||Object.keys(args).some(key=>!Object.hasOwn(definition.parameters.properties,key)))throw new ContextError('INVALID_OPERATION','Unexpected context arguments')
       return service[definition.method]({...args,sessionId:exec.agent.session.id,agent:exec.agent,signal:exec.signal})
     }}))
   }
-  for(const agent of ctx.agents.list())await attach(agent)
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)))
   disposers.push(ctx.on('agent/disposed',({agent})=>{for(const dispose of scopes.get(agent)??[])dispose();scopes.delete(agent)}))
+  for(const agent of ctx.agents.list())await attach(agent)
   disposers.push(ctx.on('session/event',(session,event)=>{if(['tool/result','turn/end'].includes(event.type))notify(session.id)}))
   if(typeof ctx.inject==='function')ctx.inject(['loopStudio'],child=>{const mount=()=>{const loop=child.get?.('loopStudio')??child.loopStudio;return loop.registerParticipant(clone(participant))};if(child.effect)child.effect(mount,'RP context Loop participant');else disposers.push(mount())})
   else{const loop=ctx.get?.('loopStudio');if(loop)disposers.push(loop.registerParticipant(clone(participant)))}
