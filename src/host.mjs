@@ -120,7 +120,7 @@ export async function createContextHost(ctx,options={}){
   disposers.push(ctx.on('agent/created',({agent})=>attach(agent)))
   disposers.push(ctx.on('agent/disposed',({agent})=>{for(const dispose of scopes.get(agent)??[])dispose();scopes.delete(agent)}))
   for(const agent of ctx.agents.list())await attach(agent)
-  disposers.push(ctx.on('session/event',(session,event)=>{if(['tool/result','turn/end'].includes(event.type))notify(session.id)}))
+  disposers.push(ctx.on('session/event',(session,event)=>{if(['user/message','assistant/message','tool/result','turn/end'].includes(event.type))notify(session.id)}))
   if(typeof ctx.inject==='function')ctx.inject(['loopStudio'],child=>{const mount=()=>{const loop=child.get?.('loopStudio')??child.loopStudio;return loop.registerParticipant(clone(participant))};if(child.effect)child.effect(mount,'RP context Loop participant');else disposers.push(mount())})
   else{const loop=ctx.get?.('loopStudio');if(loop)disposers.push(loop.registerParticipant(clone(participant)))}
   return service

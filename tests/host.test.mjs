@@ -51,6 +51,15 @@ test('lifecycle listener is installed before initial asynchronous inheritance ca
   }finally{release();service=await pending;await service.close()}
 })
 
+test('canonical user replacements invalidate the context inspector without waiting for another model turn',async()=>{
+  const{createContextHost}=await import('../src/host.mjs'),directory=await mkdtemp(join(tmpdir(),'rp-context-notify-')),f=fixture();let service
+  try{
+    service=await createContextHost(f.ctx,{directory});let changed=0;service.subscribe('s',()=>changed++)
+    for(const listener of f.handlers.get('session/event')??[])listener(f.agent.session,{type:'user/message'})
+    assert.equal(changed,1)
+  }finally{await service?.close();await rm(directory,{recursive:true,force:true})}
+})
+
 test('native preparation consumes only canonical history and honors disabled settings without calling models',async()=>{
   const module=await import('../src/host.mjs').catch(()=>({}));assert.equal(typeof module.createContextHost,'function')
   const directory=await mkdtemp(join(tmpdir(),'rp-context-host-')),f=fixture();let service
