@@ -6,6 +6,7 @@ const modes={full:'完整正文',summary:'事实摘要',index:'仅索引'}
 const defaults={enabled:true,recentTurns:5,maxChars:24000,maxSteps:8}
 const summaryOf=(record,data)=>data.representations?.[record.id]?.summary??data.summaries?.[record.id]??record.summary??''
 const sourceLabel=source=>[source?.sessionId&&`会话 ${source.sessionId}`,source?.assistantMessageId&&`消息 ${source.assistantMessageId}`,source?.callSeq!==undefined&&`调用 ${source.callSeq}`,source?.resultSeq!==undefined&&`结果 ${source.resultSeq}`,source?.callId&&`引用 ${source.callId}`].filter(Boolean).join(' · ')
+const historyReference=record=>JSON.stringify([record.id,record.source?.sessionId,record.source?.assistantMessageId,record.source?.callSeq,record.source?.resultSeq,record.source?.callId])
 
 export function ContextIcon(){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg>}
 
@@ -33,7 +34,7 @@ function Workspace({sessionId,visible,client}){
   const [data,setData]=useState(null),[settings,setSettings]=useState(null),[drafts,setDrafts]=useState({}),[selected,setSelected]=useState(null)
   const [error,setError]=useState(''),[conflict,setConflict]=useState(false),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[notice,setNotice]=useState(''),[stage,setStage]=useState('')
   const [query,setQuery]=useState(''),[matches,setMatches]=useState(null),[searching,setSearching]=useState(false)
-  const lifecycle=useRef(null),loadRef=useRef(null),searchSeq=useRef(0)
+  const lifecycle=useRef(null),loadRef=useRef(null),searchSeq=useRef(0),activeHistory=useRef(new Set())
   useEffect(()=>{
     if(!visible)return
     const controller=new AbortController();lifecycle.current=controller;let sequence=0
@@ -43,6 +44,8 @@ function Workspace({sessionId,visible,client}){
       try{
         const next=await client.state(sessionId,controller.signal)
         if(controller.signal.aborted||seq!==sequence)return
+        activeHistory.current=new Set(next.history.map(historyReference))
+        setMatches(previous=>previous===null?null:previous.filter(match=>activeHistory.current.has(historyReference(match))))
         setData(next);setLoading(false);setError('')
         setSettings(previous=>!force&&previous?.dirty?previous:{value:{...defaults,...next.settings},revision:next.revision,dirty:false})
         setDrafts(previous=>({
@@ -86,7 +89,7 @@ function Workspace({sessionId,visible,client}){
   async function search(event){
     event.preventDefault();const controller=lifecycle.current;if(!controller)return
     const seq=++searchSeq.current;setSearching(true);setError('')
-    try{const result=await client.search(sessionId,query,controller.signal);if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setMatches(result.matches)}
+    try{const result=await client.search(sessionId,query,controller.signal);if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setMatches(result.matches.filter(match=>activeHistory.current.has(historyReference(match))))}
     catch(cause){if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setError(cause.message)}
     finally{if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setSearching(false)}
   }
