@@ -1,4 +1,23 @@
-# 数据库、主动上下文与最后一步组合验收
+# Context 验收记录
+
+## 0.2.0 C-A checkpoint — 当前 rc.3
+
+2026-10-25，官方 CLI 实测 `0.2.1-rc.3`，Node `v24.15.0`、pnpm `11.9.0`。最终受测 `dsh-rp-context-0.2.0.tgz` 的 SHA256 为 `63f299d8cba9e542b945aed5b2f8dc7d3fc1f841a23c48bfeafd08ce630bc3b6`。
+
+- `pnpm check`：53 项 host 测试、19 项 UI 测试，lint、构建全部通过；`pnpm package` 通过。
+- 最终包独立安装到临时 DSH home，不安装 Database 或 Last Step。明确标识的本地合成 rp_present 经真实 native 工具执行器生成四条叙事；没有真实付费模型推理。
+- 实际本地 GM/摘要调用读取规范原文、生成摘要，提交 full/summary/index。作者注在准备前固定，同一 claim 不进入另一次准备。
+- 合成 owner action 使用真实维护 turn 的 scoped pre-step 内容替换；native main deriveMessages 与 Context 均读取已采用文本，旧 revision 摘要失效，随后产生新实际摘要。采用不增加模型或呈现次数，宿主维护 turn 仍如实为 blocked。
+- 同一临时 home 的实际宿主进程退出、重新启动后，完整事件前缀结构相等；冷读 Context 保留已采用文本，新进程模型与历史呈现计数均为 0。
+- sidebar、全屏、520px 窄屏、关闭重开通过，pageErrors 为空。窄屏 documentWidth=520，没有水平溢出。
+- v2 同裸 ID 不碰撞、受保护事实混合批次拒绝、作者注接受 proof/分支投影、精确材料与迟到响应、transfer 的来源/原子/幂等/冲突由 focused RED→GREEN 和单元/UI 测试证明。
+
+![作者注与原生设置](images/workspace.png)
+![采用后的 Context 摘要](images/adopted-context.png)
+
+此 checkpoint 的原生 rp_present 是合成 fixture，不能冒称真实 Last Step writer、Database v2 联用或完整跨 home 存档恢复已经通过。transfer seam 已实现并测试，但整套恢复仍须由 Story Kit 导入真实 canonical logs 并联用所有状态所有者。真实 Database0.2/LastStep0.3 组合、原生材料快照和作者注 writer 重试，留待 C-B 依赖就绪后验收。以下 rc.2 组合记录只属于旧 0.1.0。
+
+## 0.1.0 历史组合记录 — rc.2
 
 2026-10-25，官方 DSH 0.2.1-rc.2，Node24、pnpm11.9，独立临时 DSH home。提供方、embedding、rerank、GM、摘要与 writer 全部是明确标识的本地确定性 fixture，没有真实付费推理或用户角色卡。
 

@@ -1,4 +1,5 @@
 import {ContextError} from './core.mjs'
+import {isDeepStrictEqual} from 'node:util'
 
 const text=message=>(message?.content??[]).filter(block=>block.type==='text').map(block=>block.text).join('\n')
 const messageOf=event=>event.type==='user/message'?event.data:event.data?.message
@@ -57,8 +58,8 @@ export function createOwnerReader(ctx) {
 }
 
 /** Only canonical successful rp_present receipts form narrative history. */
-export function narrativeHistory(view) {
-  const active=new Set(view.activeAnchors),bySeq=new Map(view.events.map(event=>[event.seq,event])),latest=new Map(),calls=new Map(),results=[]
+export function narrativeHistory(view,{includeInactive=false}={}) {
+  const active=new Set(view.activeAnchors),latest=new Map(),calls=new Map(),chains=new Map(),results=[]
   let action=''
   for(const event of view.events){
     const identity=`${event.data?.turn}:${event.data?.step}`
@@ -66,16 +67,31 @@ export function narrativeHistory(view) {
     if(event.type==='assistant/message')latest.set(identity,{event,action})
     if(event.type==='tool/call'&&event.data?.name==='rp_present'){
       const owner=latest.get(identity),message=owner?.event.data?.message
-      if(active.has(message?.id)&&message.content?.some(block=>block.type==='tool-call'&&block.name==='rp_present'&&block.id===event.data.callId))calls.set(event.seq,{...owner,call:event})
+      if((includeInactive||active.has(message?.id))&&message?.content?.some(block=>block.type==='tool-call'&&block.name==='rp_present'&&block.id===event.data.callId))calls.set(event.seq,{...owner,call:event})
     }
   }
-  for(const event of view.activeEvents){
-    if(event.type!=='tool/result'||event.sourceEventSeqs?.length!==1)continue
-    const owner=calls.get(event.sourceEventSeqs[0]),message=event.data?.message,envelope=event.data?.meta?.rpLastStep,item=envelope?.record
-    if(!owner||!bySeq.has(owner.call.seq)||message?.isError||message?.source?.kind!=='tool'||message.toolCallId!==message.source.callId||message.toolCallId!==owner.call.data.callId
+  const identity=event=>{const value=structuredClone(event.data);if(value?.message)delete value.message.content;return value}
+  for(const event of view.events){
+    if(event.type!=='tool/result')continue
+    const sources=event.sourceEventSeqs
+    if(!Array.isArray(sources)||!sources.length||new Set(sources).size!==sources.length||sources.some(seq=>!Number.isSafeInteger(seq)||seq>=event.seq))continue
+    if(event.surfaceOp?.op==='replace'){
+      const previous=chains.get(event.surfaceOp.startSeq)
+      if(!previous||event.surfaceOp.endSeq!==event.surfaceOp.startSeq||!sources.includes(previous.event.seq)||!sources.includes(previous.owner.call.seq)
+        ||sources.some(seq=>seq!==previous.owner.call.seq&&chains.get(seq)?.base.seq!==previous.base.seq)||!isDeepStrictEqual(identity(event),identity(previous.event)))continue
+      chains.set(event.seq,{...previous,event});continue
+    }
+    if(event.surfaceOp!=='append'||sources.length!==1)continue
+    const owner=calls.get(sources[0]),message=event.data?.message,envelope=event.data?.meta?.rpLastStep,item=envelope?.record
+    if(!owner||message?.isError||message?.source?.kind!=='tool'||message.toolCallId!==message.source.callId||message.toolCallId!==owner.call.data.callId
       ||event.data.turn!==owner.call.data.turn||event.data.step!==owner.call.data.step||envelope?.schemaVersion!==1||item?.status!=='complete'||typeof item.id!=='string'||typeof item.text!=='string')continue
-    results.push({id:item.id,anchor:owner.event.data.message.id,turn:event.data.turn,action:typeof item.playerAction==='string'?item.playerAction:owner.action,text:item.text,createdAt:item.createdAt,
-      source:{sessionId:view.sessionId,assistantMessageId:owner.event.data.message.id,callSeq:owner.call.seq,resultSeq:event.seq,callId:owner.call.data.callId}})
+    chains.set(event.seq,{owner,item,base:event,event})
+  }
+  for(const event of includeInactive?view.events:view.activeEvents){
+    const chain=chains.get(event.seq);if(!chain)continue
+    const{owner,item,base}=chain
+    results.push({id:JSON.stringify([item.id,event.seq]),anchor:owner.event.data.message.id,turn:base.data.turn,action:typeof item.playerAction==='string'?item.playerAction:owner.action,text:event.seq===base.seq?item.text:text(event.data.message),createdAt:item.createdAt,...(typeof item.factReceiptId==='string'?{factReceiptId:item.factReceiptId}:{}),
+      source:{sessionId:view.sessionId,presentationId:item.id,assistantMessageId:owner.event.data.message.id,callSeq:owner.call.seq,baseResultSeq:base.seq,resultSeq:event.seq,callId:owner.call.data.callId}})
   }
   return results
 }

@@ -1,11 +1,13 @@
 import {ContextError} from './core.mjs'
-const fields={state:['sessionId'],configure:['sessionId','settings','expectedRevision'],read:['sessionId','historyIds'],search:['sessionId','query'],represent:['sessionId','historyId','mode','summary','expectedRevision']}
+const fields={state:['sessionId'],configure:['sessionId','settings','expectedRevision'],read:['sessionId','historyIds'],search:['sessionId','query'],represent:['sessionId','historyId','mode','summary','expectedRevision'],authorNote:['sessionId'],setAuthorNote:['sessionId','text','expectedRevision'],material:['sessionId','presentationId']}
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const id=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256
 const failure=(status,code,message)=>Response.json({error:{code,message}},{status,headers:{'cache-control':'no-store'}})
 function valid(input){
   if(!object(input)||!Object.hasOwn(fields,input.action)||!id(input.sessionId)||Object.keys(input).some(key=>key!=='action'&&!fields[input.action].includes(key)))return false
-  if(['configure','represent'].includes(input.action)&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0))return false
+  if(['configure','represent','setAuthorNote'].includes(input.action)&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0))return false
+  if(input.action==='setAuthorNote'&&(typeof input.text!=='string'||input.text.length>64000))return false
+  if(input.action==='material'&&!id(input.presentationId))return false
   if(input.action==='configure'&&!object(input.settings))return false
   if(input.action==='read'&&(!Array.isArray(input.historyIds)||input.historyIds.length>100||input.historyIds.some(value=>!id(value))))return false
   if(input.action==='search'&&(typeof input.query!=='string'||input.query.length>4000))return false

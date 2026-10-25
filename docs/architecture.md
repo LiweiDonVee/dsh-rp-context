@@ -4,7 +4,9 @@
 
 ## 正式叙事来源
 
-只有成功的规范 rp_present 工具结果进入历史：同时检查 assistant 中的调用、工具事件 turn/step、sourceEventSeqs 和 rpLastStep 元数据，避免 provider 重用调用 ID 串回合。失败稿、普通主 Agent 过程文字和被替换分支不作为叙事。
+只有成功的规范 rp_present 工具结果进入历史：同时检查 assistant 中的调用、工具事件 turn/step、sourceEventSeqs 和 rpLastStep 元数据，避免 provider 重用调用 ID 串回合。失败稿、普通主 Agent 过程文字和被替换分支不作为叙事。优先使用可选 Last Step narratives 服务，独立 parser 采用相同 revision 语义。
+
+原始成功结果和正式采用的 content-only replacement 用 `JSON.stringify([presentationId,resultSeq])` 标识不同 revision；source 保留 assistantMessageId、callSeq、baseResultSeq、resultSeq。采用后的正文来自当前 message.content，原 metadata.text 仍仅识别原执行记录。完整替换链必须保留原调用及 shadowed result，除 content 外身份和 metadata 深等。旧 UUID-only 摘要或表示仅能用于原始结果，不能跟到采用后的正文。
 
 原文、事实摘要和索引是同一来源的不同表示。模型可用 readHistory 读取原文，用 historyOperations 选择 full、summary、index；原始文本始终不变。未生成的摘要不能用截断片段冒充。显式模式只作用于本轮投影，其他旧记录的摘要缺失不会阻止人类查看某条原文或索引。
 
@@ -13,6 +15,8 @@
 第一阶段生成缺失的旧叙事摘要，每批最多8条、输入有明确字符上限。第二阶段的 JSON 决策允许 readEntries、search、databaseOperations、readHistory、historyOperations、selectedEntries、notes、unresolved 和 commit。
 
 关键词/向量/重排只提供初始候选。search 能重新检索整个启用数据库，readEntries 可访问原候选之外的稳定 ID。数据库变化先在工作副本校验；只读、必开、禁用由数据库执行器强制，GM 不能修改策略。人物知情和揭示语义由 GM 结合普通备注判断。
+
+只有 rpDatabase.apiVersion===2 才取得 materialAccess，并显式设置内部 facade.version=2。v2 所有浅选择及 operation.id 使用程序生成的 entryKey；材料条目仍保留 ref，结果 database 为 `{binding,revision,entryRefs:[{sourceKey,entryId,version}]}`。旧适配保持原形。材料 executor 在 staging 和 commit 都拒绝 GM 注册事实，混合批次不能留下部分修改。
 
 提交时检查数据库与上下文 revision、整个材料序列化字符预算和来源，再提交一次数据库批次并保存上下文计划。数据库变化与正文是独立事务；后续 writer 失败不会授权重新运行已经完成的事实工具。
 
@@ -25,3 +29,17 @@ rpContext.prepare 接收 sessionId、真实 agent、packet、baseModel、signal�
 浏览器动作 state/configure/read/search/represent 经过 owner 授权。Agent 工具只处理当前会话。搜索结果也按最新活跃来源过滤，回退后既有结果和迟到响应都不能显示旧分支条目。SSE 只发阶段和变更元数据。
 
 来源和表示计划跟随回合和分支，fork 继承有效计划的因果前缀，summary cache 按规范叙事 ID 保留但不会凭缓存重新制造已经失效的历史。设置、计划和缓存使用 revision 写队列及原子文件更新。
+
+## 作者注与材料检查
+
+带 presentationId 的准备在第一个摘要/GM 调用前，从同一 store 队列捕获 revision 与一次性作者注。note 文本作为独立 authorNote 指导输入，并以明确标签加入最终 guidance；顶层只返回 `{id,version,claimId}`。作者注不是事实条目。Context 自己失败即释放；Last Step 组装未冻结失败也释放，完整 writer 输入冻结后失败保留原 claim 供 retry。
+
+接受消费必须同时证明活动 canonical finishing presentation，以及 Last Step material 中匹配的冻结 note ID、version、claimId。后来的 owner 编辑不会被旧 retry 消费。claim 与 accepted source anchors 按活动分支投影；回退恢复同一最新 owner 版本为 pending。fork 只将投影后 pending 文本复制为子故事的新独立 note ID，不复制父 claim lineage。
+
+原生面板 owner material 动作只代理 Last Step 的保存快照。候选池只显示当时记录的有界元数据，旧 receipt 缺字段显示未记录；不从当前数据库补造，不展示虚构思考。历史、条目、版本、compiled 模块、模型和 chars 都读冻结值，SSE 不发送正文。
+
+## Context 存档片段
+
+plugin-only `exportState/preflightRestore/restoreState/contentRevision` 使用 schemaVersion 1 DTO，仅包含请求的 sessions 及其 settings/baseline/plans/summaries/authorNote/authorNoteVersion/noteClaims。导出在空闲 Session 维护锁下读取真实规范日志，并检查事件和 Context revision 前后相等；prefix 外缓存不会导出。
+
+preflight 仅检查结构、依赖与冲突。Story Kit 先导入并冷验证 exact-ID Session，再调用 restoreState。恢复通过 owner reader 核验实际 assistant anchors、全部原始/采用 revision 和 note 来源，之后按 expectedRevision 一次原子写入。restoreId 同 payload 幂等，不同 payload 或已有非本次恢复状态拒绝。插件 DTO 不生成已接受历史，不复制提供方凭据，不提供独立事件映射。

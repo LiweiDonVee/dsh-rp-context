@@ -5,7 +5,8 @@ import {resolve,join} from 'node:path'
 import {chromium} from '@playwright/test'
 
 const packageName="dsh-rp-context",root=process.cwd(),home=resolve('.runtime/'+packageName+'-smoke-'+Date.now()),evidence=resolve('.runtime/native-evidence')
-const artifact=resolve('artifacts/'+packageName+'-0.1.0.tgz')
+const manifest=JSON.parse(await readFile('package.json','utf8'))
+const artifact=resolve('artifacts/'+packageName+'-'+manifest.version+'.tgz')
 const artifactSHA256=createHash('sha256').update(await readFile(artifact)).digest('hex')
 const cli=process.env.DSH_BIN??(process.platform==='win32'?join(process.env.LOCALAPPDATA??'','Programs/DeepSeek Harness/resources/runtime/cli/bin/dsh.cmd'):'dsh')
 const quote=value=>process.platform==='win32'?'"'+value+'"':value
@@ -23,18 +24,21 @@ const install=()=>new Promise((done,reject)=>{
  for(const stream of[child.stdout,child.stderr])stream.on('data',data=>output+=data)
  child.on('error',error=>{clearTimeout(timer);reject(error)});child.on('exit',code=>{clearTimeout(timer);if(code===0)done();else reject(Error('Package installation failed: '+redact(output.slice(-6000))))})
 })
+async function startHost(patch){
+ logs='';host=spawn(quote(cli),['--profile','web','--patch',quote(patch),'--host','127.0.0.1','--port','0','--no-open'],{shell:process.platform==='win32',windowsHide:true,cwd:root,env,stdio:['ignore','pipe','pipe']})
+ for(const stream of[host.stdout,host.stderr])stream.on('data',data=>logs+=data)
+ const deadline=Date.now()+40_000
+ while(Date.now()<deadline){const url=/https?:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+/u.exec(logs)?.[0];if(url)return url;if(host.exitCode!==null)throw Error('Native host exited');await new Promise(done=>setTimeout(done,100))}
+ throw Error('Native host startup timed out')
+}
 const assert=(condition,message)=>{if(!condition)throw Error(message)}
 try{
  await install()
  const fixture=join(home,'native-probe.mjs');await writeFile(fixture,await readFile('tests/fixtures/native-probe.mjs'))
  const patch=join(home,'probe.patch.yml')
- await writeFile(patch,'- id: agent-default-model\n  config:\n    provider: smoke-local\n    model: main\n- insert:\n    - id: native-smoke-probe\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n    - id: native-smoke-story\n      name: "@deepseek-ai/dsh-agent-preset"\n      config:\n        id: native-smoke-story\n        name: 独立合成故事验收\n        description: 本地确定性模型，无私有资料\n        plugins: []\n')
+ await writeFile(patch,'- id: session-title-llm\n  disabled: true\n- id: llm-deepseek\n  disabled: true\n- id: llm-deepseek-account\n  disabled: true\n- id: llm-pi-ai\n  disabled: true\n- id: agent-default-model\n  config:\n    provider: smoke-local\n    model: main\n- insert:\n    - id: native-smoke-probe\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n    - id: native-smoke-story\n      name: "@deepseek-ai/dsh-agent-preset"\n      config:\n        id: native-smoke-story\n        name: 独立合成故事验收\n        description: 本地确定性模型，无私有资料\n        plugins: []\n')
  stage='host-start'
- host=spawn(quote(cli),['--profile','web','--patch',quote(patch),'--host','127.0.0.1','--port','0','--no-open'],{shell:process.platform==='win32',windowsHide:true,cwd:root,env,stdio:['ignore','pipe','pipe']})
- for(const stream of[host.stdout,host.stderr])stream.on('data',data=>logs+=data)
- let url;const deadline=Date.now()+40_000
- while(Date.now()<deadline){url=/https?:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+/u.exec(logs)?.[0];if(url)break;if(host.exitCode!==null)throw Error('Native host exited');await new Promise(done=>setTimeout(done,100))}
- assert(url,'Native host startup timed out')
+ const url=await startHost(patch)
  stage='browser'
  browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{}})
  page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(15_000);page.on('pageerror',error=>errors.push(error.message))
@@ -52,8 +56,9 @@ try{
  assert(state.history.length===3,'Three native terminal receipts did not form canonical narrative history')
  const originals=await api('read',{sessionId,historyIds:state.history.map(row=>row.id)})
  assert(originals.records.every(row=>Number.isSafeInteger(row.source.callSeq)&&row.source.resultSeq>row.source.callSeq),'Canonical source event references missing')
- await api('configure',{sessionId,settings:{recentTurns:1},expectedRevision:state.revision})
- const prepared=await probe({action:'prepare',sessionId})
+ const configured=await api('configure',{sessionId,settings:{recentTurns:1},expectedRevision:state.revision})
+ await api('setAuthorNote',{sessionId,text:'用简洁句子呈现已确认场景。',expectedRevision:configured.revision})
+ const prepared=await probe({action:'prepare',sessionId,presentationId:'fixture-initial-preparation'})
  assert(!prepared.hasDatabase&&!prepared.prepared.database,'Standalone context unexpectedly loaded database')
  assert(prepared.calls.filter(row=>row.kind==='main').length===3&&prepared.receipts.length===3,'Native terminal turns were repeated')
  assert(prepared.calls.some(row=>row.kind==='summarize'&&row.ids.length===2),'Actual summaries were not generated')
@@ -63,13 +68,16 @@ try{
  assert(JSON.stringify(modes)===JSON.stringify(['summary','index','full']),'Preparation did not commit three representation modes')
  const after=await api('read',{sessionId,historyIds:originals.records.map(row=>row.id)})
  assert(after.records.length===originals.records.length&&after.records.every((row,i)=>row.text===originals.records[i].text&&JSON.stringify(row.source)===JSON.stringify(originals.records[i].source)),'Preparation changed original source')
- const checks={nativeTurns:3,canonicalSources:true,standalonePreparation:true,actualSummaries:true,exactRead:true,modes,originalsRetained:true}
+ assert(prepared.prepared.authorNote?.claimId==='fixture-initial-preparation'&&prepared.prepared.materials.guidance.includes('Owner writing guidance'),'Author note was not frozen separately from facts')
+ const checks={nativeTurns:3,canonicalSources:true,standalonePreparation:true,actualSummaries:true,exactRead:true,modes,originalsRetained:true,authorNoteClaimed:true}
 
  stage='native-ui'
  await page.evaluate(id=>window.__workspaceCtx.get('uiWorkspace').openSession(id),sessionId)
  await page.getByRole('button',{name:"打开主动上下文",exact:true}).click()
  const panel=page.locator("[data-rp-context-root]");await panel.waitFor({state:'visible'})
  await page.getByText('当前窗口用于中间 GM 选材与最终写作输入。DSH 主 Agent 的历史和日志仍然保留；原生与 ACP 的上下文压缩由宿主管理。',{exact:true}).waitFor()
+ await panel.getByRole('region',{name:'作者注',exact:true}).scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(evidence,'native-author-note.png')})
  await page.getByRole('button',{name:'展开原文',exact:true}).click()
  await page.getByRole('region',{name:'历史原文',exact:true}).waitFor()
  assert((await page.getByRole('region',{name:'历史原文',exact:true}).textContent()).includes(originals.records[0].text),'Native original viewer omitted exact prose')
@@ -91,6 +99,36 @@ try{
  await panel.waitFor({state:'hidden'})
  await page.getByRole('button',{name:"打开主动上下文",exact:true}).click();await panel.waitFor({state:'visible'})
  await page.screenshot({path:join(evidence,'native-reopened.png')})
+ stage='native-adopted-revision'
+ state=await api('state',{sessionId});const previous=state.history.at(-1)
+ await api('represent',{sessionId,historyId:previous.id,mode:'summary',summary:'旧正文的专用摘要。',expectedRevision:state.revision})
+ stage='native-before-adopt-snapshot'
+ const beforeAdopt=await probe({action:'snapshot',sessionId}),adoptedText='守卫已经离开，潮湿的门槛外留着清晰脚印。'
+ stage='native-adopt-command'
+ await probe({action:'adopt',sessionId,text:adoptedText})
+ const adoptedSnapshot=await probe({action:'snapshot',sessionId}),adoptedState=await api('state',{sessionId}),adopted=adoptedState.history.at(-1)
+ assert(adopted.text===adoptedText&&adopted.id!==previous.id&&adopted.summary===undefined,'Adopted revision reused original prose or summary')
+ assert(JSON.stringify(adoptedSnapshot.messages).includes(adoptedText),'Native main history did not derive adopted content')
+ assert(adoptedSnapshot.calls.length===beforeAdopt.calls.length&&adoptedSnapshot.receipts.length===beforeAdopt.receipts.length,'Fixture adoption repeated model or presentation work')
+ assert(adoptedSnapshot.events.findLast(event=>event.type==='turn/end')?.data.reason?.kind==='blocked','Maintenance turn was not reported honestly as blocked')
+ await probe({action:'run',sessionId,text:'我继续观察门槛。'})
+ const next=await probe({action:'prepare',sessionId,presentationId:'fixture-unrelated-preparation'})
+ assert(next.calls.some(call=>call.kind==='summarize'&&call.ids.includes(adopted.id)),'Adopted prose did not receive a new actual summary')
+ assert(next.prepared.materials.history.some(row=>row.id===adopted.id&&row.content.includes(adoptedText)),'Context materials did not use adopted prose')
+ assert(!next.prepared.authorNote,'Claimed author note leaked into an unrelated preparation')
+ await panel.getByText('事实摘要：'+adoptedText,{exact:true}).first().waitFor()
+ await panel.getByText('事实摘要：'+adoptedText,{exact:true}).first().scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(evidence,'native-adopted-context.png')})
+ Object.assign(checks,{nativeTurns:4,adoptedMainHistory:true,adoptedContextMaterials:true,oldSummaryInvalidated:true,adoptionRepeatedWork:false,maintenanceTurn:'blocked',authorNoteExclusive:true})
+ const persisted=await probe({action:'snapshot',sessionId})
+ stage='native-cold-restart'
+ await kill(host);host=undefined
+ await page.goto(await startHost(patch),{waitUntil:'networkidle'})
+ const coldState=await api('state',{sessionId}),coldSnapshot=await probe({action:'snapshot',sessionId})
+ assert(JSON.stringify(coldSnapshot.events)===JSON.stringify(persisted.events),'Canonical native events changed across restart')
+ assert(coldState.history.some(row=>row.id===adopted.id&&row.text===adoptedText),'Cold Context reader lost adopted prose')
+ assert(coldSnapshot.calls.length===0&&coldSnapshot.receipts.length===0,'Cold reading replayed historical work')
+ Object.assign(checks,{coldRestart:true,exactEventPrefix:true,coldModelCalls:0,coldPresentationCalls:0})
  assert(errors.length===0,'Browser page errors: '+JSON.stringify(errors))
  result={...result,passed:true,status:'passed',checks,layoutMetrics,pageErrors:errors};await save();console.log(JSON.stringify(result))
 }catch(error){

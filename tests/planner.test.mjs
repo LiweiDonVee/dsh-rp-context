@@ -291,3 +291,80 @@ test('invalid history compression allows correction and cannot stage a sibling d
   assert.equal(result.materials.entries[0].content, 'fact near');
   assert.equal(db.commits.length, 0);
 });
+
+function qualifiedDatabase() {
+  const ref = (sourceKey, entryId) => ({ sourceKey, entryId });
+  const key = value => JSON.stringify([value.sourceKey, value.entryId]);
+  const binding = { schemaVersion: 2, sources: [{ key: 'alpha', databaseId: 'one', version: 2 }, { key: 'beta', databaseId: 'two', version: 4 }], factEntryRefs: [ref('@session', 'gm.facts')] };
+  let persisted = [entry('same', { ref: ref('alpha', 'same'), content: 'Alpha original' }), entry('same', { ref: ref('beta', 'same'), content: 'Beta original', mode: 'required' }), entry('gm.facts', { ref: ref('@session', 'gm.facts'), content: 'Protected facts' })];
+  let revision = 7;
+  const commits = [];
+  const reject = code => { throw Object.assign(new Error(code), { code }); };
+  const facade = {
+    version: 2,
+    snapshot: async () => ({ revision, binding: structuredClone(binding), entries: structuredClone(persisted), notes: [], changes: [] }),
+    search: async () => ({ revision, candidates: [{ key: key(ref('alpha', 'same')), ref: ref('alpha', 'same'), score: 1, reasons: ['keyword'] }], required: [{ key: key(ref('beta', 'same')), ref: ref('beta', 'same') }], degraded: [] }),
+    select: (source, keys) => {
+      const selected = keys.map(value => source.find(item => key(item.ref) === value) ?? reject('NOT_FOUND'));
+      return structuredClone([...new Map([...selected, ...source.filter(item => item.mode === 'required')].map(item => [key(item.ref), item])).values()]);
+    },
+    apply: (source, operations) => {
+      if (operations.some(operation => operation.id === key(ref('@session', 'gm.facts')))) reject('FACT_OWNER_REQUIRED');
+      const entries = structuredClone(source);
+      for (const operation of operations) {
+        const target = entries.find(item => key(item.ref) === operation.id);
+        if (!target) reject('NOT_FOUND');
+        if (operation.op !== 'update' || typeof operation.patch?.content !== 'string') reject('INVALID_OPERATION');
+        target.content = operation.patch.content; target.version++;
+      }
+      return { entries, notes: [] };
+    },
+    commit: async ({ operations, expectedRevision }) => {
+      assert.equal(expectedRevision, revision);
+      persisted = facade.apply(persisted, operations).entries;
+      commits.push(structuredClone(operations));
+      return { revision: ++revision };
+    },
+  };
+  return { facade, binding, commits, alpha: key(ref('alpha', 'same')), beta: key(ref('beta', 'same')), facts: key(ref('@session', 'gm.facts')) };
+}
+
+test('v2 material facade keeps duplicate raw entry IDs distinct with qualified frozen refs', async t => {
+  const db = qualifiedDatabase();
+  const f = await fixture(t, [request => {
+    assert.equal(request.input.database.binding.sources.length, 2);
+    assert.equal(request.input.database.catalog[0].id, db.alpha);
+    assert.equal(request.input.database.catalog[0].key, db.alpha);
+    assert.deepEqual(request.input.candidates.map(item => item.key), [db.alpha, db.beta]);
+    return { text: JSON.stringify({ readEntries: [db.alpha, db.beta], commit: false }) };
+  }, request => {
+    assert.deepEqual(request.input.readEntries.map(item => item.content), ['Alpha original', 'Beta original']);
+    return { text: JSON.stringify({ databaseOperations: [{ op: 'update', id: db.alpha, patch: { content: 'Alpha staged' } }], selectedEntries: [db.alpha], commit: true }) };
+  }]);
+  const result = await f.planner.prepare({ ...f.input, database: db.facade });
+  assert.deepEqual(result.materials.entries.map(item => item.content), ['Alpha staged', 'Beta original']);
+  assert.deepEqual(result.database, { binding: db.binding, revision: 8, entryRefs: [{ sourceKey: 'alpha', entryId: 'same', version: 2 }, { sourceKey: 'beta', entryId: 'same', version: 1 }] });
+  assert.equal(result.materials.entries[1].ref.sourceKey, 'beta');
+  assert.equal(Object.isFrozen(result.database.binding.sources), true);
+  assert.equal(result.candidates[0].key, db.alpha);
+  assert.equal(result.candidates[0].score, 1);
+  assert.deepEqual(result.candidates[0].reasons, ['keyword']);
+  assert.equal(result.candidates[0].content, undefined);
+  assert.equal(result.candidates[0].excerpt, undefined);
+  assert.equal(db.commits.length, 1);
+});
+
+test('a mixed material batch touching GM-owned facts stages no otherwise-valid changes', async t => {
+  const db = qualifiedDatabase();
+  const f = await fixture(t, [
+    { databaseOperations: [{ op: 'update', id: db.alpha, patch: { content: 'Must be discarded' } }, { op: 'update', id: db.facts, patch: { content: 'Forbidden' } }], commit: true },
+    request => {
+      assert.equal(request.input.diagnostics[0].code, 'FACT_OWNER_REQUIRED');
+      assert.equal(request.input.candidates[0].excerpt, 'Alpha original');
+      return { text: JSON.stringify({ selectedEntries: [db.alpha], commit: true }) };
+    },
+  ]);
+  const result = await f.planner.prepare({ ...f.input, database: db.facade });
+  assert.equal(result.materials.entries[0].content, 'Alpha original');
+  assert.equal(db.commits.length, 0);
+});
