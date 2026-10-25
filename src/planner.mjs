@@ -33,6 +33,7 @@ function decision(text) {
 function modelConfig(base, override = {}) {
   const result = {};
   for (const name of ['provider', 'model', 'reasoningEffort', 'maxTokens']) if ((override[name] ?? base?.[name]) !== undefined) result[name] = override[name] ?? base[name];
+  if ((result.provider !== base?.provider || result.model !== base?.model) && !Object.hasOwn(override, 'reasoningEffort')) delete result.reasoningEffort;
   return clone(result);
 }
 const metadata = entry => ({ id: entry.id, title: String(entry.title ?? '').slice(0, 160), mode: entry.mode, readOnly: entry.readOnly, version: entry.version, keywords: (entry.keywords ?? []).slice(0, 12).map(word => String(word).slice(0, 80)), tags: (entry.tags ?? []).slice(0, 12).map(word => String(word).slice(0, 80)) });
@@ -56,6 +57,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
         abort(signal);
         if (typeof sessionId !== 'string' || !sessionId.trim() || typeof anchor !== 'string' || !anchor.trim()) fail('INVALID_REFERENCE', 'Preparation requires session and canonical anchor IDs');
         const packet = clone(input.packet ?? {});
+        const baseModel = clone(input.baseModel ?? {});
         const sourceHistory = clone(input.history);
         // Validate all host references before issuing a model or database call.
         buildHistory(sourceHistory);
@@ -63,9 +65,9 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
         let view = await store.view(sessionId, { activeAnchors });
         const settings = view.settings;
         if (!settings.enabled) fail('CONTEXT_DISABLED', 'Context preparation is disabled', 409);
-        const resolved = clone(await resolveModels?.({ sessionId, baseModel: clone(input.baseModel ?? {}), signal }) ?? {});
-        const both = Object.hasOwn(resolved, 'provider') || Object.hasOwn(resolved, 'model') ? resolved : {};
-        const configs = freeze({ prepare: modelConfig(input.baseModel, resolved.prepare ?? both), summarize: modelConfig(input.baseModel, resolved.summarize ?? both) });
+        const resolved = clone(await resolveModels?.({ sessionId, baseModel: clone(baseModel), signal }) ?? {});
+        const both = ['provider','model','reasoningEffort','maxTokens'].some(key => Object.hasOwn(resolved,key)) ? resolved : {};
+        const configs = freeze({ prepare: modelConfig(baseModel, resolved.prepare ?? both), summarize: modelConfig(baseModel, resolved.summarize ?? both) });
         const models = clone(configs);
         let representations = Object.fromEntries(Object.entries(view.representations).filter(([historyId]) => sourceHistory.some(record => record.id === historyId)));
         const withCache = () => sourceHistory.map(record => ({ ...record, ...(record.summary === undefined && Object.hasOwn(view.summaries, record.id) ? { summary: view.summaries[record.id] } : {}) }));

@@ -92,6 +92,29 @@ test('no-database mode prepares frozen history and resolves stage routes once', 
   assert.equal(JSON.stringify(f.events).includes('Exact narrative'), false);
 });
 
+test('shared model control overrides apply even without a provider or model override', async t => {
+  const f = await fixture(t, [{commit:true}], {resolveModels:async()=>({reasoningEffort:'high',maxTokens:9000})});
+  const result=await f.planner.prepare(f.input);
+  assert.equal(result.models.prepare.reasoningEffort,'high');
+  assert.equal(result.models.prepare.maxTokens,9000);
+});
+
+test('base model is captured before asynchronous store and route resolution', async t => {
+  let input;
+  const f = await fixture(t,[{commit:true}],{resolveModels:async()=>{input.baseModel.model='changed';input.baseModel.maxTokens=7;return {}}});
+  input=f.input;
+  const result=await f.planner.prepare(input);
+  assert.equal(result.models.prepare.model,'writer');
+  assert.equal(result.models.prepare.maxTokens,2000);
+});
+
+test('a different model route does not inherit reasoning controls belonging to the main model', async t => {
+  const f=await fixture(t,[{commit:true}],{resolveModels:async()=>({prepare:{provider:'local',model:'fast'}})});
+  f.input.baseModel.reasoningEffort='high';
+  const result=await f.planner.prepare(f.input);
+  assert.equal(result.models.prepare.reasoningEffort,undefined);
+});
+
 test('candidate-outside search and exact entry reads select a required union', async t => {
   const db = database([entry('near'), entry('outside'), entry('required', { mode: 'required' }), entry('hidden', { mode: 'disabled' })]);
   const f = await fixture(t, [
