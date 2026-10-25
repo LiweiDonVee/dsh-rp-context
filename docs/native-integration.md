@@ -21,3 +21,9 @@ Context 窗口只影响自己的材料与 writer；测试核对较早正文已�
 
 ![真实 LastStep 冻结模块与模型记录](images/integration-material.png)
 ![旧 retry 后保留的新作者注](images/integration-note.png)
+
+## Export lock 窄回归
+
+`node scripts/export-lock-smoke.mjs --context-tgz ./artifacts/dsh-rp-context-0.2.0.tgz`（或 `pnpm smoke:export-lock`）只安装 Context，在独立 rc.3 home 验证 standalone 与真实外层 Agent.runMaintenance 下调用同一 export 的组合，以及实际 generating 时拒绝。没有 writer/restore 场景；唯一模型调用用于受控 busy guard。默认证据在 `.runtime/export-lock-evidence`，记录受测包 SHA256。
+
+这是公开 SDK 锁组合的定点回归。七包 SavedStory 必须由协调者带入批准后的 Context 包重验；不以省略 Context 或新建 alreadyLocked 字段代替。

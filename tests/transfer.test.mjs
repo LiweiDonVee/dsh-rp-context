@@ -257,3 +257,49 @@ test('legacy ambiguous local bookkeeping stays unverified without LastStep and c
   allGone.sessions.set('story', [...ambiguousPresentations(), { seq: 6, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 5 }, data: { id: 'remove-all-possible-results', source: { kind: 'runtime-context' }, content: [] } }]);
   assert.equal((await allGone.service.state({ sessionId: 'story' })).authorNote.status, 'pending');
 });
+
+function maintenanceAgent() {
+  let phase = 'idle', acquisitions = 0;
+  const agent = { session: { id: 'story' }, get status() { return phase === 'idle' || phase === 'maintenance' ? 'idle' : 'running'; },
+    runMaintenance(work) {
+      acquisitions++;
+      if (phase !== 'idle') throw Error('agent "story" already has active work');
+      phase = 'maintenance';
+      return Promise.resolve().then(work).finally(() => { phase = 'idle'; });
+    } };
+  return { agent, acquisitions: () => acquisitions, generate: () => { phase = 'running'; } };
+}
+
+test('standalone Context export checks a live idle Agent without acquiring host maintenance', async t => {
+  const source = await fixture(t), live = maintenanceAgent();source.ctx.agents.get = id => id === 'story' ? live.agent : undefined;
+  const state = await source.service.exportState({ sessionIds: ['story'] });
+  assert.equal(state.payload.sessions[0].sessionId, 'story');assert.equal(live.acquisitions(), 0);
+});
+
+test('Context export composes with an owner-held nonreentrant SDK-shaped maintenance scope', async t => {
+  const source = await fixture(t), live = maintenanceAgent();source.ctx.agents.get = id => id === 'story' ? live.agent : undefined;
+  const state = await live.agent.runMaintenance(async () => {
+    assert.equal(live.agent.status, 'idle');
+    return source.service.exportState({ sessionIds: ['story'] });
+  });
+  assert.equal(state.payload.sessions[0].sessionId, 'story');assert.equal(live.acquisitions(), 1);
+});
+
+test('export rejects generation starting during capture even if canonical data has not advanced yet', async t => {
+  const source = await fixture(t), live = maintenanceAgent();source.ctx.agents.get = () => live.agent;
+  const read = source.ctx.typertGateway.stream;let reads = 0;
+  source.ctx.typertGateway.stream = async input => { const value = await read(input);if (++reads === 2) live.generate();return value; };
+  await assert.rejects(source.service.exportState({ sessionIds: ['story'] }), { code: 'EXPORT_CHANGED' });
+});
+
+test('standalone export still rejects relevant source revision and live-handle changes', async t => {
+  const sourceChange = await fixture(t), read = sourceChange.ctx.typertGateway.stream;let reads = 0;
+  sourceChange.ctx.typertGateway.stream = async input => { if (++reads === 2) sourceChange.sessions.get('story').push({ seq: 4, type: 'user/message', surfaceOp: 'append', data: { id: 'changed-source', source: { kind: 'user' }, content: [] } });return read(input); };
+  await assert.rejects(sourceChange.service.exportState({ sessionIds: ['story'] }), { code: 'EXPORT_CHANGED' });
+  const revisionChange = await fixture(t), capture = revisionChange.store.exportState;
+  revisionChange.store.exportState = async ids => { const value = await capture(ids);await revisionChange.store.configure('story', { settings: { recentTurns: 2 }, expectedRevision: value.revision });return value; };
+  await assert.rejects(revisionChange.service.exportState({ sessionIds: ['story'] }), { code: 'EXPORT_CHANGED' });
+  const handleChange = await fixture(t), first = maintenanceAgent(), second = maintenanceAgent();let lookups = 0;
+  handleChange.ctx.agents.get = () => ++lookups === 1 ? first.agent : second.agent;
+  await assert.rejects(handleChange.service.exportState({ sessionIds: ['story'] }), { code: 'EXPORT_CHANGED' });
+});

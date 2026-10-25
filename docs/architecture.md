@@ -40,7 +40,7 @@ rpContext.prepare 接收 sessionId、真实 agent、packet、baseModel、signal�
 
 ## Context 存档片段
 
-plugin-only `exportState/preflightRestore/restoreState/contentRevision` 使用 schemaVersion 1 DTO，仅包含请求的 sessions 及其 settings/baseline/plans/summaries/authorNote/authorNoteVersion/noteClaims。导出在空闲 Session 维护锁下读取真实规范日志，并检查事件和 Context revision 前后相等；prefix 外缓存不会导出。
+plugin-only `exportState/preflightRestore/restoreState/contentRevision` 使用 schemaVersion 1 DTO，仅包含请求的 sessions 及其 settings/baseline/plans/summaries/authorNote/authorNoteVersion/noteClaims。StoryKit 唯一持有 aggregate Agent maintenance scope，Context.exportState 不重取宿主维护锁。Context 自己在前后检查公共 idle 状态、Agent/Session 身份，通过授权 owner reader 读取实际日志，保留自身原子 store snapshot，并检查 canonical events 和 contentRevision 稳定；真实生成或变化返回 EXPORT_CHANGED。单独调用是经检查的 owner-local snapshot，不承诺跨 owner 原子性。prefix 外缓存不会导出；restore 的原有 idle/proof helper 保持。
 
 preflight 仅检查结构、依赖与冲突。Story Kit 先导入并冷验证 exact-ID Session，再调用 restoreState。恢复通过 owner reader 核验实际 assistant anchors、全部原始/采用 revision 和 note 来源，之后按 expectedRevision 一次原子写入。restoreId 同 payload 幂等，不同 payload 或已有非本次恢复状态拒绝。插件 DTO 不生成已接受历史，不复制提供方凭据，不提供独立事件映射。
 

@@ -1,5 +1,13 @@
 # Context 验收记录
 
+## Export maintenance 组合修复 — R24/T17
+
+七包 SavedStory 原生场景发现 Context.exportState 嵌套获取非重入 Agent.runMaintenance。修复仅限 export 协调：不重取宿主锁，保留授权、cold-child ensure、canonical/注来源、原子快照、前后 idle/身份及 source/revision 稳定性；restore 的锁与 proof 没有拆除。
+
+4 项锁回归先 RED 后 GREEN，完整检查为 66 host +19 UI。新包 SHA256：`a1ae06a361099fd2894119e8c87b80e60c73496ed423cfbeb3b4e83b326fb66c`。
+
+只运行一次当前 rc.3 窄范围真实 SDK harness：Context 单独安装，standalone export 和真实外层 runMaintenance 中的同一 export 均成功；维护期间公开 status=idle。显式启动一次本地模型生成后，export 返回 EXPORT_CHANGED；结束生成后再导出成功，owner 设置/注保持。计数为外层 maintenance 1、busy-guard model 1、writer 0、restore 0。没有重复 writer/restore 全链，也没有把此窄测试冒充七包 SavedStory；后者由协调者用新获批 archive 重验。
+
 ## C-B 基础包真实联用 checkpoint
 
 实际安装已验收 Database0.2 DB-A、LastStep0.3 LS-A、Context0.2 C-A tgz，在独立官方 rc.3 home 中通过真实插件/SDK 运行。Context 安装包仍为 `486095a318fa273517a27c0f15b2beea7123751cc51dfe80bfc7e368fdcaef4c`，本轮只有测试脚本/fixture/文档和脚本入口变化，没有修改生产逻辑。

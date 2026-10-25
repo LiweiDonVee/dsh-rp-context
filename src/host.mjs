@@ -85,6 +85,13 @@ export async function createContextHost(ctx,options={}){
     }
     return take(0)
   }
+  function exportIdleSessions(ids,previous){
+    return ids.map((id,index)=>{
+      const agent=ctx.agents.get(id),session=agent?.session
+      if(agent?.status&&agent.status!=='idle'||previous&&(agent!==previous[index].agent||session!==previous[index].session))throw new ContextError('EXPORT_CHANGED','Context export requires unchanged idle canonical sessions',409)
+      return{agent,session}
+    })
+  }
   async function noteEvidence(view,claimId,claim,signal,restore=false){
     const invalid=()=>{throw new ContextError(restore?'RESTORE_PAYLOAD_INVALID':'PRESENTATION_NOT_ACCEPTED','Author-note consumption requires one canonical finishing presentation with matching frozen claim',409)}
     const history=narrativeHistory(view,{includeInactive:true}),finishing=[...new Set(history.filter(record=>record.anchor===claim.outcomeAnchor).map(record=>record.source.presentationId))]
@@ -132,17 +139,17 @@ export async function createContextHost(ctx,options={}){
   const service={
     contentRevision:(input={})=>run(input.signal,()=>store.contentRevision()),
     exportState:input=>run(input.signal,async signal=>{
-      const ids=transferSessionIds(input.sessionIds)
-      return idleSessions(ids,async()=>{
-        const views=await Promise.all(ids.map(id=>readOwner(id,signal))),byId=new Map(views.map(view=>[view.sessionId,view])),inherited=new Set()
-        async function inherit(view){if(inherited.has(view.sessionId))return;const parent=byId.get(view.parentSession);if(parent)await inherit(parent);await ensure(view);inherited.add(view.sessionId)}
-        for(const view of views)await inherit(view)
-        const state=await store.exportState(ids)
-        for(const item of state.payload.sessions)item.state=canonicalContextState(item.state,views.find(view=>view.sessionId===item.sessionId),{prune:true})
-        const after=await Promise.all(ids.map(id=>readOwner(id,signal)))
-        if((await store.contentRevision()).revision!==state.revision||views.some((view,index)=>JSON.stringify(view.events)!==JSON.stringify(after[index].events)))throw new ContextError('EXPORT_CHANGED','Context or canonical sessions changed during export; retry explicitly',409)
-        return validateTransferState(state,ids)
-      })
+      const ids=transferSessionIds(input.sessionIds),live=exportIdleSessions(ids)
+      const views=await Promise.all(ids.map(id=>readOwner(id,signal))),byId=new Map(views.map(view=>[view.sessionId,view])),inherited=new Set()
+      async function inherit(view){if(inherited.has(view.sessionId))return;const parent=byId.get(view.parentSession);if(parent)await inherit(parent);await ensure(view);inherited.add(view.sessionId)}
+      for(const view of views)await inherit(view)
+      const state=await store.exportState(ids)
+      for(const item of state.payload.sessions)item.state=canonicalContextState(item.state,views.find(view=>view.sessionId===item.sessionId),{prune:true})
+      const after=await Promise.all(ids.map(id=>readOwner(id,signal)))
+      const revision=(await store.contentRevision()).revision
+      exportIdleSessions(ids,live)
+      if(revision!==state.revision||views.some((view,index)=>JSON.stringify(view.events)!==JSON.stringify(after[index].events)))throw new ContextError('EXPORT_CHANGED','Context or canonical sessions changed during export; retry explicitly',409)
+      return validateTransferState(state,ids)
     }),
     preflightRestore:input=>run(input.signal,()=>store.preflightRestore(input.sessionIds,input.state)),
     restoreState:input=>run(input.signal,async signal=>{
