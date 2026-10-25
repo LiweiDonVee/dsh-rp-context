@@ -24,9 +24,10 @@ export function validateSettings(value = {}) {
 
 function sourceRef(source) {
   if (!object(source) || !nonempty(source.assistantMessageId)) fail('INVALID_HISTORY', 'History requires a canonical source.assistantMessageId reference');
-  for (const name of ['sessionId', 'callId']) if (source[name] !== undefined && !nonempty(source[name])) fail('INVALID_HISTORY', `Invalid source ${name}`);
+  for (const name of ['sessionId', 'callId', 'presentationId']) if (source[name] !== undefined && !nonempty(source[name])) fail('INVALID_HISTORY', `Invalid source ${name}`);
   const sequence = value => Number.isSafeInteger(value) && value >= 0;
-  for (const name of ['callSeq', 'resultSeq']) if (source[name] !== undefined && !sequence(source[name])) fail('INVALID_HISTORY', `Invalid source ${name}`);
+  for (const name of ['callSeq', 'resultSeq', 'baseResultSeq']) if (source[name] !== undefined && !sequence(source[name])) fail('INVALID_HISTORY', `Invalid source ${name}`);
+  if (source.presentationId !== undefined && (!sequence(source.callSeq) || !sequence(source.baseResultSeq) || !sequence(source.resultSeq) || source.baseResultSeq <= source.callSeq || source.resultSeq < source.baseResultSeq)) fail('INVALID_HISTORY', 'Invalid canonical narrative revision');
   if (source.sourceEventSeqs !== undefined && (!Array.isArray(source.sourceEventSeqs) || !source.sourceEventSeqs.every(sequence))) fail('INVALID_HISTORY', 'Invalid source event sequence references');
   try { return JSON.parse(JSON.stringify(source)); } catch { fail('INVALID_HISTORY', 'History source must be serializable'); }
 }
@@ -41,11 +42,12 @@ export function buildHistory(history, { recentTurns = 5, representations = {} } 
     if (seen.has(item.id)) fail('DUPLICATE_ID', `Duplicate history ID: ${item.id}`);
     seen.add(item.id);
     const source = sourceRef(item.source);
+    if (source.presentationId !== undefined && item.id !== JSON.stringify([source.presentationId, source.resultSeq])) fail('INVALID_HISTORY', 'Narrative ID must identify its canonical result revision');
     const sourceKey = JSON.stringify([source.sessionId ?? '', source.assistantMessageId, source.callSeq ?? null, source.resultSeq ?? null]);
     if (sources.has(sourceKey)) fail('DUPLICATE_ID', 'Duplicate canonical narrative source');
     sources.add(sourceKey);
     if (source.assistantMessageId !== item.anchor) fail('INVALID_HISTORY', 'History anchor must identify its canonical source message');
-    return { id: item.id, anchor: item.anchor, turn: item.turn, action: item.action, text: item.text, ...(item.summary === undefined ? {} : { summary: item.summary }), source };
+    return { id: item.id, anchor: item.anchor, turn: item.turn, action: item.action, text: item.text, ...(typeof item.factReceiptId === 'string' ? { factReceiptId: item.factReceiptId } : {}), ...(item.summary === undefined ? {} : { summary: item.summary }), source };
   });
   for (const id of Object.keys(representations)) if (!seen.has(id)) fail('INVALID_REFERENCE', `Representation refers to inactive history: ${id}`);
   const recent = new Set([...new Set(records.map(item => item.turn))].sort((a, b) => a - b).slice(-recentTurns));
@@ -57,6 +59,16 @@ export function buildHistory(history, { recentTurns = 5, representations = {} } 
     const content = mode === 'full' ? item.text : mode === 'summary' ? summary ?? '' : JSON.stringify({ id: item.id, turn: item.turn, source: item.source });
     return { ...item, ...(summary === undefined ? {} : { summary }), mode, content, ...(mode === 'summary' && summary === undefined ? { needsSummary: true } : {}) };
   });
+}
+
+/** Legacy presentation IDs apply only to the unchanged original result. */
+export function projectHistoryState(history, state) {
+  const active = values => Object.fromEntries(history.flatMap(record => {
+    const original = record.source?.resultSeq === record.source?.baseResultSeq ? record.source?.presentationId : undefined;
+    const key = Object.hasOwn(values ?? {}, record.id) ? record.id : original !== undefined && Object.hasOwn(values ?? {}, original) ? original : undefined;
+    return key === undefined ? [] : [[record.id, structuredClone(values[key])]];
+  }));
+  return { ...state, representations: active(state.representations), summaries: active(state.summaries) };
 }
 
 function freeze(value) {

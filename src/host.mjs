@@ -1,11 +1,12 @@
 import {homedir} from 'node:os'
 import {join} from 'node:path'
-import {ContextError,buildHistory} from './core.mjs'
+import {ContextError,buildHistory,projectHistoryState} from './core.mjs'
 import {createContextStore} from './store.mjs'
 import {createPlanner} from './planner.mjs'
 import {createModelCaller,resolveModelConfig} from './models.mjs'
 import {projectSession,createOwnerReader,narrativeHistory} from './session.mjs'
 import {createContextRoutes} from './routes.mjs'
+import {transferSessionIds,validateTransferState,canonicalContextState} from './transfer.mjs'
 
 export const name='rp-context'
 export const inject=['connection','typertGateway','agents','llm']
@@ -35,14 +36,26 @@ export async function createContextHost(ctx,options={}){
     if(!view.parentSession||known.has(view.sessionId))return
     const work=inheritance.then(async()=>{
       if(known.has(view.sessionId))return
-      const initial=await store.view(view.parentSession,{activeAnchors:view.activeAnchors})
-      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,expectedRevision:initial.revision})}
+      const{state:initial,activePresentationAnchors}=await noteProjection(view.parentSession,view)
+      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors,expectedRevision:initial.revision})}
       catch(error){if(error.code!=='SESSION_EXISTS')throw error}
       known.add(view.sessionId)
     })
     inheritance=work.catch(()=>{});return work
   }
-  async function current(input,signal){const view=await viewFor(input,signal);await ensure(view);const state=await store.view(input.sessionId,{activeAnchors:view.activeAnchors});const history=narrativeHistory(view).map(record=>({...record,...Object.hasOwn(state.summaries,record.id)?{summary:state.summaries[record.id]}:{}}));return{view,state,history}}
+  async function current(input,signal){
+    const view=await viewFor(input,signal);await ensure(view)
+    const reader=ctx.get?.('rpLastStep');let records
+    if(typeof reader?.narratives==='function'){
+      try{records=(await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records.map(record=>({...record,anchor:record.ref?.assistantMessageId,source:record.ref}))}
+      catch(error){if(signal?.aborted)throw error;records=narrativeHistory(view)}
+    }else records=narrativeHistory(view)
+    buildHistory(records)
+    const projected=await noteProjection(input.sessionId,view,signal,records)
+    const state=projectHistoryState(records,projected.state)
+    const history=records.map(record=>({...record,...Object.hasOwn(state.summaries,record.id)?{summary:state.summaries[record.id]}:{}}))
+    return{view,state,history,activePresentationAnchors:projected.activePresentationAnchors}
+  }
   function baseFor(input,view){
     if(input.baseModel)return resolveModelConfig(clone(input.baseModel))
     const agent=input.agent??ctx.agents.get(input.sessionId),header=agent?.session.requestHeader?.()
@@ -63,9 +76,117 @@ export async function createContextHost(ctx,options={}){
       return value
     }catch(error){try{loop?.recordTrace({sessionId:input.sessionId,nodeId:input.stageId,...input.config,status:input.signal?.aborted?'cancelled':'failed'})}catch{/* Optional trace only. */}throw error}
   }
+  async function idleSessions(ids,work,code='EXPORT_CHANGED'){
+    async function take(index){
+      if(index===ids.length)return work()
+      const agent=ctx.agents.get(ids[index])
+      if(agent?.status&&agent.status!=='idle')throw new ContextError(code,'Context transfer requires idle canonical sessions',409)
+      return typeof agent?.runMaintenance==='function'?agent.runMaintenance(()=>take(index+1)):take(index+1)
+    }
+    return take(0)
+  }
+  function exportIdleSessions(ids,previous){
+    return ids.map((id,index)=>{
+      const agent=ctx.agents.get(id),session=agent?.session
+      if(agent?.status&&agent.status!=='idle'||previous&&(agent!==previous[index].agent||session!==previous[index].session))throw new ContextError('EXPORT_CHANGED','Context export requires unchanged idle canonical sessions',409)
+      return{agent,session}
+    })
+  }
+  async function noteEvidence(view,claimId,claim,signal,restore=false){
+    const invalid=()=>{throw new ContextError(restore?'RESTORE_PAYLOAD_INVALID':'PRESENTATION_NOT_ACCEPTED','Author-note consumption requires one canonical finishing presentation with matching frozen claim',409)}
+    const history=narrativeHistory(view,{includeInactive:true}),finishing=[...new Set(history.filter(record=>record.anchor===claim.outcomeAnchor).map(record=>record.source.presentationId))]
+    if(!finishing.length)invalid()
+    const last=ctx.get?.('rpLastStep'),missing=()=>{throw new ContextError(restore?'RESTORE_REQUIREMENT_MISSING':'PRESENTATION_NOT_ACCEPTED','LastStep frozen material is required before validating consumed author notes',409)}
+    if(typeof last?.material!=='function')missing()
+    const matches=[]
+    for(const presentationId of finishing){
+      let material
+      try{material=await last.material({sessionId:view.sessionId,presentationId,signal})}catch(error){if(signal?.aborted)throw error;if([401,403].includes(error.status))invalid();missing()}
+      const proof=material?.contextPreparation?.authorNote
+      if(material?.presentationId===presentationId&&proof?.id===claim.note.id&&proof?.version===claim.note.version&&proof?.claimId===claimId)matches.push(presentationId)
+    }
+    if(matches.length!==1||claim.outcomePresentationId!==undefined&&claim.outcomePresentationId!==matches[0])invalid()
+    return{presentationId:matches[0],active:narrativeHistory(view).some(record=>record.source.presentationId===matches[0])}
+  }
+  async function noteProjection(sessionId,view,signal,records=narrativeHistory(view)){
+    let activePresentationAnchors=records.map(record=>record.anchor)
+    let state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})
+    if(state.authorNote?.status==='consumed'){
+      const claimId=state.authorNote.claimedBy,claims=await store.authorNoteClaims(sessionId),claim=claims[claimId]
+      const history=narrativeHistory(view,{includeInactive:true}),finishing=[...new Set(history.filter(record=>record.anchor===claim.outcomeAnchor).map(record=>record.source.presentationId))]
+      let presentationId=claim.outcomePresentationId
+      if(presentationId===undefined){
+        if(typeof ctx.get?.('rpLastStep')?.material==='function'){
+          let evidence
+          try{evidence=await noteEvidence(view,claimId,claim,signal)}catch(error){if(signal?.aborted)throw error;/* Legacy local bookkeeping stays unverified until its optional proof is available. */}
+          if(evidence){
+            await store.cacheAuthorNoteOutcome(sessionId,{claimId,noteId:claim.note.id,version:claim.note.version,outcomeAnchor:claim.outcomeAnchor,presentationId:evidence.presentationId})
+            state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})
+            presentationId=(await store.authorNoteClaims(sessionId))[claimId]?.outcomePresentationId??evidence.presentationId
+          }
+        }
+        if(presentationId===undefined&&finishing.length===1)presentationId=finishing[0]
+        if(presentationId===undefined&&finishing.length>1)return{state,activePresentationAnchors}
+      }
+      const active=presentationId!==undefined&&narrativeHistory(view).some(record=>record.anchor===claim.outcomeAnchor&&record.source.presentationId===presentationId)
+      if(!active){activePresentationAnchors=activePresentationAnchors.filter(anchor=>anchor!==claim.outcomeAnchor);state=await store.view(sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors})}
+    }
+    return{state,activePresentationAnchors}
+  }
+  async function restoredNoteEvidence(state,view,signal){
+    for(const[claimId,claim]of Object.entries(state.noteClaims??{}))if(claim.status==='consumed'){const evidence=await noteEvidence(view,claimId,claim,signal,true);claim.outcomePresentationId=evidence.presentationId}
+  }
   const service={
+    contentRevision:(input={})=>run(input.signal,()=>store.contentRevision()),
+    exportState:input=>run(input.signal,async signal=>{
+      const ids=transferSessionIds(input.sessionIds),live=exportIdleSessions(ids)
+      const views=await Promise.all(ids.map(id=>readOwner(id,signal))),byId=new Map(views.map(view=>[view.sessionId,view])),inherited=new Set()
+      async function inherit(view){if(inherited.has(view.sessionId))return;const parent=byId.get(view.parentSession);if(parent)await inherit(parent);await ensure(view);inherited.add(view.sessionId)}
+      for(const view of views)await inherit(view)
+      const state=await store.exportState(ids)
+      for(const item of state.payload.sessions)item.state=canonicalContextState(item.state,views.find(view=>view.sessionId===item.sessionId),{prune:true})
+      const after=await Promise.all(ids.map(id=>readOwner(id,signal)))
+      const revision=(await store.contentRevision()).revision
+      exportIdleSessions(ids,live)
+      if(revision!==state.revision||views.some((view,index)=>JSON.stringify(view.events)!==JSON.stringify(after[index].events)))throw new ContextError('EXPORT_CHANGED','Context or canonical sessions changed during export; retry explicitly',409)
+      return validateTransferState(state,ids)
+    }),
+    preflightRestore:input=>run(input.signal,()=>store.preflightRestore(input.sessionIds,input.state)),
+    restoreState:input=>run(input.signal,async signal=>{
+      const result=await store.restoreState({...input,signal,validateSources:(state,ids)=>idleSessions(ids,async()=>{
+        for(const item of state.payload.sessions){
+          let view
+          try{view=await readOwner(item.sessionId,signal)}catch(error){if(signal.aborted)throw error;throw new ContextError('RESTORE_REQUIREMENT_MISSING','Import and validate the exact canonical session before restoring Context',409)}
+          canonicalContextState(item.state,view)
+          await restoredNoteEvidence(item.state,view,signal)
+        }
+      },'RESTORE_REQUIREMENT_MISSING')})
+      for(const id of result.restoredSessionIds){known.add(id);notify(id)}
+      return result
+    }),
     state:input=>run(input.signal,async signal=>{const{state,history}=await current(input,signal);const representations=Object.fromEntries(Object.entries(state.representations).filter(([id])=>history.some(record=>record.id===id)));return{...state,representations,history:buildHistory(history,{recentTurns:state.settings.recentTurns,representations}),scope:'preparation-and-writer'}}),
-    configure:input=>run(input.signal,async signal=>{await current(input,signal);const result=await store.configure(input.sessionId,input);notify(input.sessionId);return result}),
+    configure:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.configure(input.sessionId,input);notify(input.sessionId);return result}),
+    authorNote:input=>run(input.signal,async signal=>(await current(input,signal)).state.authorNote??null),
+    setAuthorNote:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.setAuthorNote(input.sessionId,input);notify(input.sessionId);return result}),
+    presentationOutcome:input=>run(input.signal,async signal=>{
+      const{history,view}=await current(input,signal)
+      const accepted=history.find(record=>record.source.presentationId===input.presentationId)
+      if(input.status==='accepted'&&!accepted)throw new ContextError('PRESENTATION_NOT_ACCEPTED','Only an active canonical accepted presentation can consume its author note',409)
+      if(input.status==='accepted'){
+        const claimId=input.claimId??input.presentationId,claim=await store.authorNoteClaim(input.sessionId,claimId)
+        if(claim){
+          const evidence=await noteEvidence(view,claimId,{note:claim,outcomeAnchor:accepted.anchor},signal)
+          if(!evidence.active||evidence.presentationId!==input.presentationId)throw new ContextError('PRESENTATION_NOT_ACCEPTED','Accepted author-note finishing lineage is not active and unambiguous',409)
+        }
+      }
+      const result=await store.presentationOutcome(input.sessionId,{...input,anchor:accepted?.anchor});notify(input.sessionId);return result
+    }),
+    material:input=>run(input.signal,async signal=>{
+      await viewFor(input,signal)
+      const last=ctx.get?.('rpLastStep')
+      if(typeof last?.material!=='function')throw new ContextError('MATERIAL_UNAVAILABLE','The presentation material service is unavailable',503)
+      return clone(await last.material({sessionId:input.sessionId,presentationId:input.presentationId,signal}))
+    }),
     catalog:input=>run(input.signal,async signal=>{const{state,history}=await current(input,signal);return{revision:state.revision,settings:state.settings,history:buildHistory(history,{recentTurns:state.settings.recentTurns,representations:Object.fromEntries(Object.entries(state.representations).filter(([id])=>history.some(record=>record.id===id)))}).map(metadata),unresolved:state.unresolved}}),
     read:input=>run(input.signal,async signal=>{
       if(!Array.isArray(input.historyIds)||input.historyIds.some(id=>typeof id!=='string'))throw new ContextError('INVALID_REFERENCE','Narrative IDs must be strings')
@@ -84,17 +205,18 @@ export async function createContextHost(ctx,options={}){
       const result=await store.savePlan(input.sessionId,{representations:filtered,unresolved:state.unresolved,anchor:view.currentAnchor,expectedRevision:input.expectedRevision});notify(input.sessionId);return result
     }),
     prepare:input=>run(input.signal,async signal=>{
-      const{state,history,view}=await current(input,signal);if(!state.settings.enabled)return null
+      const{state,history,view,activePresentationAnchors}=await current(input,signal);if(!state.settings.enabled)return null
       if(!view.currentAnchor)throw new ContextError('ANCHOR_REQUIRED','Preparation requires the current Agent turn',409)
       const db=ctx.get?.('rpDatabase');let database
-      if(db){await db.ensureAgent?.(input.agent??ctx.agents.get(input.sessionId));if(db.hasBinding(input.sessionId))database={
+      if(db?.apiVersion===2&&typeof db.materialAccess!=='function')throw new ContextError('DATABASE_CAPABILITY_UNAVAILABLE','Database v2 materialAccess is required for qualified material preparation',503)
+      if(db){await db.ensureAgent?.(input.agent??ctx.agents.get(input.sessionId));if(db.hasBinding(input.sessionId))database=db.apiVersion===2?{...await db.materialAccess({sessionId:input.sessionId,agent:input.agent,signal}),version:2}:{
         snapshot:()=>db.effective({sessionId:input.sessionId,agent:input.agent,signal}),
         search:args=>db.search({...args,sessionId:input.sessionId,agent:input.agent,signal}),
         apply:db.applyToSnapshot,select:db.selectFromSnapshot,
         commit:args=>db.patch({...args,sessionId:input.sessionId,agent:input.agent,signal}),
       }}
-      const planner=createPlanner({store,callModel:invoke,resolveModels:({sessionId})=>routesFor(sessionId),publish:event=>{notify(input.sessionId,{...event,type:'stage'});try{ctx.emit('rp-context/stage',{...event,sessionId:input.sessionId})}catch{/* Optional UI observer. */}}})
-      const result=await planner.prepare({sessionId:input.sessionId,anchor:view.currentAnchor,activeAnchors:view.activeAnchors,packet:clone(input.packet),history,database,baseModel:baseFor(input,view),signal})
+      const planner=createPlanner({store,callModel:invoke,resolveModels:({sessionId})=>routesFor(sessionId),publish:event=>{if(event.status==='prepared')notify(input.sessionId);notify(input.sessionId,{...event,type:'stage'});try{ctx.emit('rp-context/stage',{...event,sessionId:input.sessionId})}catch{/* Optional UI observer. */}}})
+      const result=await planner.prepare({sessionId:input.sessionId,anchor:view.currentAnchor,activeAnchors:view.activeAnchors,activePresentationAnchors,packet:clone(input.packet),presentationId:input.presentationId,factReceiptId:input.factReceiptId,story:clone(input.story),history,database,baseModel:baseFor(input,view),signal})
       notify(input.sessionId);return result
     }),
     authorize:(id,signal)=>run(signal,combined=>readOwner(id,combined)),

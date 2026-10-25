@@ -5,8 +5,10 @@ const api=createRpContextApi()
 const modes={full:'完整正文',summary:'事实摘要',index:'仅索引'}
 const defaults={enabled:true,recentTurns:5,maxChars:24000,maxSteps:8}
 const summaryOf=(record,data)=>data.representations?.[record.id]?.summary??data.summaries?.[record.id]??record.summary??''
-const sourceLabel=source=>[source?.sessionId&&`会话 ${source.sessionId}`,source?.assistantMessageId&&`消息 ${source.assistantMessageId}`,source?.callSeq!==undefined&&`调用 ${source.callSeq}`,source?.resultSeq!==undefined&&`结果 ${source.resultSeq}`,source?.callId&&`引用 ${source.callId}`].filter(Boolean).join(' · ')
-const historyReference=record=>JSON.stringify([record.id,record.source?.sessionId,record.source?.assistantMessageId,record.source?.callSeq,record.source?.resultSeq,record.source?.callId])
+const sourceLabel=source=>[source?.sessionId&&`会话 ${source.sessionId}`,source?.presentationId&&`呈现 ${source.presentationId}`,source?.assistantMessageId&&`消息 ${source.assistantMessageId}`,source?.callSeq!==undefined&&`调用 ${source.callSeq}`,source?.baseResultSeq!==undefined&&`原结果 ${source.baseResultSeq}`,source?.resultSeq!==undefined&&`结果 ${source.resultSeq}`,source?.callId&&`引用 ${source.callId}`].filter(Boolean).join(' · ')
+const historyReference=record=>JSON.stringify([record.id,record.source?.sessionId,record.source?.presentationId,record.source?.assistantMessageId,record.source?.callSeq,record.source?.baseResultSeq,record.source?.resultSeq,record.source?.callId])
+const noteStatus={pending:'等待下一次准备',claimed:'已冻结供重试',consumed:'已由正式呈现使用'}
+const json=value=>JSON.stringify(value??null,null,2)
 
 export function ContextIcon(){return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg>}
 
@@ -18,11 +20,34 @@ function Original({client,sessionId,record,signal}){
     request.current?.abort();const controller=new AbortController();request.current=controller
     const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted)controller.abort()
     setBusy(true);setError('')
-    try{const data=await client.read(sessionId,[record.id],controller.signal);if(!controller.signal.aborted){const found=data.records.find(item=>item.id===record.id);if(found)setResult(found);else setError('该叙事已不在当前故事分支中。')}}
+    try{const data=await client.read(sessionId,[record.id],controller.signal);if(!controller.signal.aborted){const found=data.records.find(item=>historyReference(item)===historyReference(record));if(found)setResult(found);else setError('该叙事已不在当前故事分支中。')}}
     catch(cause){if(!controller.signal.aborted)setError(cause.message)}
     finally{signal.removeEventListener('abort',abort);if(!controller.signal.aborted)setBusy(false)}
   }
-  return <div className="rpc-original"><button type="button" disabled={busy} onClick={()=>result?setResult(null):void read()}>{busy?'读取原文…':result?'收起原文':'展开原文'}</button>{error&&<p role="alert">{error}</p>}{result&&<section aria-label="历史原文"><p className="rpc-source">{sourceLabel(result.source)}</p><pre>{result.text}</pre></section>}</div>
+  return <div className="rpc-original" id={`rpc-original-${encodeURIComponent(record.id)}`}><button type="button" disabled={busy} onClick={()=>result?setResult(null):void read()}>{busy?'读取原文…':result?'收起原文':'展开原文'}</button><details><summary>规范来源引用</summary><pre>{json(record.source)}</pre></details>{error&&<p role="alert">{error}</p>}{result&&<section aria-label="历史原文"><p className="rpc-source">{sourceLabel(result.source)}</p><pre>{result.text}</pre></section>}</div>
+}
+
+function FrozenMaterial({client,sessionId,record,signal}){
+  const[result,setResult]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),request=useRef(null)
+  useEffect(()=>()=>request.current?.abort(),[])
+  async function read(){
+    request.current?.abort();const controller=new AbortController();request.current=controller
+    const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted)controller.abort()
+    setBusy(true);setError('')
+    try{const data=await client.material(sessionId,record.source.presentationId,controller.signal);if(!controller.signal.aborted&&data.presentationId===record.source.presentationId)setResult(data)}
+    catch(cause){if(!controller.signal.aborted)setError(cause.message)}
+    finally{signal.removeEventListener('abort',abort);if(!controller.signal.aborted)setBusy(false)}
+  }
+  const preparation=result?.contextPreparation,materials=preparation?.materials
+  return <div className="rpc-frozen"><button type="button" disabled={busy} onClick={()=>result?setResult(null):void read()}>{busy?'读取冻结材料…':result?'收起冻结材料':'查看冻结材料'}</button>{error&&<p role="alert">{error}</p>}{result&&<section aria-label="冻结写作材料"><h3>冻结写作材料</h3><p className="rpc-help">此处是当时实际保存的输入。后续来源变化不会更新本快照。</p><p>状态：{result.status} · 字符：{materials?.chars??'未报告'}</p><a href={`#rpc-original-${encodeURIComponent(record.id)}`}>原文与来源</a>
+    <details open><summary>已选条目与版本引用</summary><pre>{json(preparation?.database?.entryRefs??[])}</pre><pre>{json(materials?.entries??[])}</pre></details>
+    <details><summary>已记录候选池</summary><p className="rpc-help">当次有界候选池，仅列已保存的检索元数据。</p><pre>{preparation&&Object.hasOwn(preparation,'candidates')?json(preparation.candidates):'未记录'}</pre></details>
+    <details><summary>历史表示与来源</summary><pre>{json(materials?.history??[])}</pre></details>
+    <details><summary>写作指导与作者注</summary><pre>{materials?.guidance??'未记录'}</pre><pre>{json(preparation?.authorNote)}</pre></details>
+    <details><summary>模块与编译输入</summary><pre>{json(result.compiled)}</pre></details>
+    <details><summary>实际模型与用量记录</summary><pre>{json({preparation:preparation?.models,presentation:result.models})}</pre></details>
+    <details><summary>原始方向包</summary><pre>{json(result.packet)}</pre></details>
+  </section>}</div>
 }
 
 export function ContextWorkspace({sessionId,visible=true,client=api}){
@@ -34,6 +59,7 @@ function Workspace({sessionId,visible,client}){
   const [data,setData]=useState(null),[settings,setSettings]=useState(null),[drafts,setDrafts]=useState({}),[selected,setSelected]=useState(null)
   const [error,setError]=useState(''),[conflict,setConflict]=useState(false),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[notice,setNotice]=useState(''),[stage,setStage]=useState('')
   const [query,setQuery]=useState(''),[matches,setMatches]=useState(null),[searching,setSearching]=useState(false)
+  const [noteDraft,setNoteDraft]=useState(null)
   const lifecycle=useRef(null),loadRef=useRef(null),searchSeq=useRef(0),activeHistory=useRef(new Set())
   useEffect(()=>{
     if(!visible)return
@@ -48,6 +74,7 @@ function Workspace({sessionId,visible,client}){
         setMatches(previous=>previous===null?null:previous.filter(match=>activeHistory.current.has(historyReference(match))))
         setData(next);setLoading(false);setError('')
         setSettings(previous=>!force&&previous?.dirty?previous:{value:{...defaults,...next.settings},revision:next.revision,dirty:false})
+        setNoteDraft(previous=>!force&&previous?.dirty?previous:{text:next.authorNote?.status==='consumed'?'':next.authorNote?.text??'',revision:next.revision,dirty:false})
         setDrafts(previous=>({
           ...(!force?Object.fromEntries(Object.entries(previous).filter(([,draft])=>draft.dirty)):{}),
           ...Object.fromEntries(next.history.map(record=>[record.id,!force&&previous[record.id]?.dirty?previous[record.id]:{mode:record.mode,summary:summaryOf(record,next),revision:next.revision,dirty:false}])),
@@ -73,16 +100,18 @@ function Workspace({sessionId,visible,client}){
   async function write(kind){
     const controller=lifecycle.current;if(!controller||saving)return
     setError('');setNotice('')
-    const input=kind==='settings'?settings:draft
+    const input=kind==='settings'?settings:kind==='note'?noteDraft:draft
     if(kind==='representation'&&input.mode==='summary'&&!input.summary.trim()){setError('请填写事实摘要，或等待下次最终呈现自动生成。');return}
     setSaving(true)
     try{
       if(kind==='settings')await client.configure(sessionId,input.value,input.revision,controller.signal)
+      else if(kind==='note')await client.setAuthorNote(sessionId,input.text,input.revision,controller.signal)
       else await client.represent(sessionId,{historyId:selected,mode:input.mode,...(input.mode==='summary'?{summary:input.summary.trim()}:{}),expectedRevision:input.revision},controller.signal)
       if(controller.signal.aborted||lifecycle.current!==controller)return
       if(kind==='settings')setSettings(previous=>({...previous,dirty:false}))
+      else if(kind==='note')setNoteDraft(previous=>({...previous,dirty:false}))
       else setDrafts(previous=>({...previous,[selected]:{...previous[selected],dirty:false}}))
-      setConflict(false);setNotice(kind==='settings'?'设置已保存':'历史表示已保存');await loadRef.current?.()
+      setConflict(false);setNotice(kind==='settings'?'设置已保存':kind==='note'?'作者注已保存':'历史表示已保存');await loadRef.current?.()
     }catch(cause){if(!controller.signal.aborted&&lifecycle.current===controller){setError(cause.message);if(cause.status===409)setConflict(true)}}
     finally{if(!controller.signal.aborted&&lifecycle.current===controller)setSaving(false)}
   }
@@ -93,7 +122,7 @@ function Workspace({sessionId,visible,client}){
     catch(cause){if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setError(cause.message)}
     finally{if(!controller.signal.aborted&&lifecycle.current===controller&&seq===searchSeq.current)setSearching(false)}
   }
-  const staleDraft=data&&(settings?.dirty&&settings.revision!==data.revision||Object.values(drafts).some(item=>item.dirty&&item.revision!==data.revision))
+  const staleDraft=data&&(settings?.dirty&&settings.revision!==data.revision||noteDraft?.dirty&&noteDraft.revision!==data.revision||Object.values(drafts).some(item=>item.dirty&&item.revision!==data.revision))
   if(!visible)return null
   return <main className="rpc-workspace" data-rp-context-root={sessionId}>
     <header className="rpc-header"><div><h1><ContextIcon/>主动上下文</h1><p>查看本轮材料，保留故事原文。</p></div><button type="button" disabled={loading||saving} onClick={()=>void loadRef.current?.()}>刷新</button></header>
@@ -109,6 +138,12 @@ function Workspace({sessionId,visible,client}){
       <button type="submit" disabled={saving||!settings.dirty}>{saving?'正在保存…':'保存设置'}</button>
     </form></section>}
     {data&&<>
+      {noteDraft&&<section className="rpc-panel" aria-label="作者注"><div className="rpc-section-head"><h2>作者注</h2><span>{noteStatus[data.authorNote?.status]??'尚无作者注'}</span></div>
+        {data.authorNote?.claimedBy&&<p className="rpc-source">关联呈现：{data.authorNote.claimedBy} · 版本 {data.authorNote.version}</p>}
+        <form onSubmit={event=>{event.preventDefault();void write('note')}}><label>下次写作作者注<textarea aria-label="下次写作作者注" rows="3" maxLength={64000} value={noteDraft.text} disabled={saving} placeholder="只指导叙事表达，不修改已发生事实" onChange={event=>{setNotice('');setNoteDraft(previous=>({...previous,text:event.target.value,dirty:true}))}}/></label>
+          <p className="rpc-help">首次准备会固定本注；正式呈现后使用，写作失败时供同次重试。保存新注不会改变旧材料。保存空白可清除下次作者注。</p><button type="submit" disabled={saving||!noteDraft.dirty}>保存作者注</button>
+        </form>
+      </section>}
       <section className="rpc-panel" aria-label="正式叙事历史"><div className="rpc-section-head"><h2>正式叙事历史</h2><span>{data.history.length} 条</span></div><p className="rpc-help">选择材料表示只影响后续输入；原文保持不变。</p>
         <form className="rpc-search" onSubmit={search}><label><span className="rpc-sr">搜索历史</span><input type="search" aria-label="搜索历史" value={query} placeholder="搜索当前故事的正式叙事" onChange={event=>setQuery(event.target.value)}/></label><button type="submit" disabled={searching||!query.trim()}>{searching?'搜索中…':'搜索历史'}</button></form>
         {matches!==null&&<section className="rpc-results" aria-label="搜索结果"><h3>搜索结果</h3>{matches.length?matches.map(match=><div key={match.id}><button type="button" onClick={()=>setSelected(match.id)}>查看第 {match.turn} 轮 · {modes[match.mode]??'历史'}</button>{match.summary&&<p>{match.summary}</p>}<p className="rpc-source">{sourceLabel(match.source)}</p></div>):<p>没有匹配的正式叙事</p>}</section>}
@@ -117,7 +152,8 @@ function Workspace({sessionId,visible,client}){
           <label>历史表示<select aria-label="历史表示" value={draft.mode} disabled={saving} onChange={event=>editRepresentation('mode',event.target.value)}>{Object.entries(modes).map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></label>
           <label>事实摘要<textarea aria-label="事实摘要" rows="5" value={draft.summary} disabled={saving||draft.mode!=='summary'} placeholder="只记录已确认的事实，不把提案当作已发生事件" onChange={event=>editRepresentation('summary',event.target.value)}/></label>
           <p className="rpc-help">选择事实摘要时需有实际内容。未决事项在下方单独列出。</p><button type="button" disabled={saving||!draft.dirty} onClick={()=>void write('representation')}>保存表示</button>
-          {lifecycle.current&&<Original key={selected} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
+          {lifecycle.current&&<Original key={historyReference(record)} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
+          {lifecycle.current&&record.source?.presentationId&&<FrozenMaterial key={historyReference(record)} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
         </section>}</div>}
       </section>
       <section className="rpc-panel" aria-label="未决事项"><h2>未决事项</h2><p className="rpc-help">尚未确定的问题单独保留，不作为已经发生的事件。</p>{data.unresolved?.length?<ul>{data.unresolved.map((text,index)=><li key={index}>{text}</li>)}</ul>:<p className="rpc-empty">暂无未决事项</p>}</section>

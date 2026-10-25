@@ -46,6 +46,12 @@
 .rpc-material p{margin-top:7px;white-space:pre-wrap;max-height:280px;overflow:auto;line-height:1.8;font-size:12px}
 .rpc-inspector>.rpc-help{margin-bottom:12px}
 .rpc-original{margin-top:16px;padding-top:13px;border-top:1px solid var(--rpc-line)}
+.rpc-frozen{margin-top:16px;padding-top:13px;border-top:1px solid var(--rpc-line)}
+.rpc-frozen section{margin-top:12px}
+.rpc-workspace details{margin-top:10px;min-width:0}
+.rpc-workspace summary{cursor:pointer;font-size:12px;color:var(--rpc-accent)}
+.rpc-frozen pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;margin:8px 0 0;padding:10px;max-height:360px;overflow:auto;border:1px solid var(--rpc-line);border-radius:5px;background:var(--rpc-panel);font-family:inherit;font-size:11px;line-height:1.8}
+.rpc-frozen a{color:var(--rpc-accent)}
 .rpc-original section{margin-top:12px}
 .rpc-original pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;margin:8px 0 0;padding:12px;max-height:420px;overflow:auto;border:1px solid var(--rpc-line);border-radius:5px;background:var(--rpc-panel);font-family:inherit;font-size:12px;line-height:1.9}
 .rpc-results{padding:12px;background:var(--rpc-panel);border-radius:5px}

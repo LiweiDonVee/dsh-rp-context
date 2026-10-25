@@ -7,6 +7,7 @@ export function createRpContextApi(send = (...args) => globalThis.fetch(...args)
     try { data = await response.json() }
     catch { throw Object.assign(new Error('无法读取上下文响应，请重试。'),{status:response.status}) }
     if (!response.ok || data?.error) throw Object.assign(new Error(data?.error?.message || '上下文请求失败，请重试。'),{status:response.status,code:data?.error?.code})
+    if (action === 'authorNote' && data === null) return null
     if (!data || typeof data !== 'object') throw new Error('上下文响应不完整，请重新载入。')
     return data
   }
@@ -16,6 +17,9 @@ export function createRpContextApi(send = (...args) => globalThis.fetch(...args)
     read:(sessionId,historyIds,signal)=>request('read',{sessionId,historyIds},signal),
     search:(sessionId,query,signal)=>request('search',{sessionId,query},signal),
     represent:(sessionId,input,signal)=>request('represent',{sessionId,...input},signal),
+    authorNote:(sessionId,signal)=>request('authorNote',{sessionId},signal),
+    setAuthorNote:(sessionId,text,expectedRevision,signal)=>request('setAuthorNote',{sessionId,text,expectedRevision},signal),
+    material:(sessionId,presentationId,signal)=>request('material',{sessionId,presentationId},signal),
     subscribe(sessionId,onEvent,onError) {
       const url=new URL('api/rp-context/events',document.baseURI);url.searchParams.set('sessionId',sessionId)
       const source=new EventSource(url)
