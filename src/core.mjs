@@ -22,7 +22,7 @@ export function validateSettings(value = {}) {
   return result;
 }
 
-function sourceRef(source) {
+export function sourceRef(source) {
   if (!object(source) || !nonempty(source.assistantMessageId)) fail('INVALID_HISTORY', 'History requires a canonical source.assistantMessageId reference');
   for (const name of ['sessionId', 'callId', 'presentationId']) if (source[name] !== undefined && !nonempty(source[name])) fail('INVALID_HISTORY', `Invalid source ${name}`);
   const sequence = value => Number.isSafeInteger(value) && value >= 0;
@@ -62,13 +62,25 @@ export function buildHistory(history, { recentTurns = 5, representations = {} } 
 }
 
 /** Legacy presentation IDs apply only to the unchanged original result. */
-export function projectHistoryState(history, state) {
-  const active = values => Object.fromEntries(history.flatMap(record => {
+export function projectHistoryState(history, state, historyProjection) {
+  const identity = source => JSON.stringify(Object.keys(source ?? {}).sort().map(key => [key, source[key]]));
+  const exact = (record, source) => source !== undefined && identity(record.source) === identity(source);
+  const byId = new Map(history.map(record => [record.id, record]));
+  const priorRefs = new Map((state.historyRefs ?? []).map(ref => [JSON.stringify([ref.presentationId, ref.resultSeq]), ref]));
+  const active = (values, accepts = () => true) => Object.fromEntries(history.flatMap(record => {
     const original = record.source?.resultSeq === record.source?.baseResultSeq ? record.source?.presentationId : undefined;
     const key = Object.hasOwn(values ?? {}, record.id) ? record.id : original !== undefined && Object.hasOwn(values ?? {}, original) ? original : undefined;
-    return key === undefined ? [] : [[record.id, structuredClone(values[key])]];
+    return key === undefined || !accepts(key, record) ? [] : [[record.id, structuredClone(values[key])]];
   }));
-  return { ...state, representations: active(state.representations), summaries: active(state.summaries) };
+  const matching = historyProjection === undefined || state.historyProjection?.projectionKey === historyProjection.projectionKey
+    || state.historyProjection !== undefined && state.historyRefs !== undefined
+      && [...priorRefs].every(([id, ref]) => byId.has(id) && exact(byId.get(id), ref))
+      && state.historyProjection.activeFactReceiptIds.every(id => historyProjection.activeFactReceiptIds.includes(id));
+  const ownerIds = new Set(state.ownerRepresentationIds ?? []);
+  const representations = active(state.representations, (_key, record) => matching || ownerIds.has(record.id) && exact(record, priorRefs.get(record.id)));
+  return { ...state, representations, unresolved: matching ? state.unresolved : [],
+    ownerRepresentationIds: [...ownerIds].filter(id => Object.hasOwn(representations, id)),
+    summaries: active(state.summaries, (key, record) => historyProjection === undefined || exact(record, state.summaryRefs?.[key]) || state.summaryProjectionKeys?.[key] === historyProjection.projectionKey) };
 }
 
 function freeze(value) {

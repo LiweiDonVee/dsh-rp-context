@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ContextError, validateSettings } from './core.mjs';
 import { narrativeHistory } from './session.mjs';
+import { validateHistoryProjection, validateHistoryRefs } from './history-projection.mjs';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && !!value.trim() && value.length <= 256;
@@ -38,12 +39,25 @@ function note(value) {
   if (!id(value.id) || typeof value.text !== 'string' || !value.text.trim() || value.text.length > 64000 || !integer(value.version) || value.version < 1 || !['pending', 'claimed', 'consumed'].includes(value.status) || value.claimedBy !== undefined && !id(value.claimedBy)) invalid();
 }
 function sessionState(value) {
-  exact(value, ['settings', 'baseline', 'plans', 'summaries', 'authorNote', 'authorNoteVersion', 'noteClaims']);
+  exact(value, ['settings', 'baseline', 'plans', 'summaries', 'summaryProjectionKeys', 'summaryRefs', 'authorNote', 'authorNoteVersion', 'noteClaims']);
   if (!object(value.settings)) invalid();value.settings = validateSettings(value.settings);
   exact(value.baseline, ['representations', 'unresolved']);representations(value.baseline.representations);strings(value.baseline.unresolved);
   if (!Array.isArray(value.plans) || !object(value.summaries)) invalid();
-  for (const plan of value.plans) { exact(plan, ['anchor', 'representations', 'unresolved']);if (!id(plan.anchor)) invalid();representations(plan.representations);strings(plan.unresolved); }
+  for (const plan of value.plans) {
+    exact(plan, ['anchor', 'representations', 'unresolved', 'historyProjection', 'historyRefs', 'ownerRepresentationIds']);if (!id(plan.anchor)) invalid();representations(plan.representations);strings(plan.unresolved);
+    if (plan.historyProjection !== undefined) plan.historyProjection = validateHistoryProjection(plan.historyProjection);
+    if (plan.historyRefs !== undefined) plan.historyRefs = validateHistoryRefs(plan.historyRefs);
+    if (plan.ownerRepresentationIds !== undefined && (!Array.isArray(plan.ownerRepresentationIds) || new Set(plan.ownerRepresentationIds).size !== plan.ownerRepresentationIds.length || plan.ownerRepresentationIds.some(key => typeof key !== 'string' || !Object.hasOwn(plan.representations, key)))) invalid();
+  }
   for (const [key, text] of Object.entries(value.summaries)) if (!key.trim() || typeof text !== 'string' || !text.trim()) invalid();
+  if (value.summaryProjectionKeys !== undefined) {
+    if (!object(value.summaryProjectionKeys)) invalid();
+    for (const [key, projectionKey] of Object.entries(value.summaryProjectionKeys)) if (!Object.hasOwn(value.summaries, key) || !id(projectionKey)) invalid();
+  }
+  if (value.summaryRefs !== undefined) {
+    if (!object(value.summaryRefs)) invalid();
+    for (const [key, ref] of Object.entries(value.summaryRefs)) if (!Object.hasOwn(value.summaries, key) || JSON.stringify([validateHistoryRefs([ref])[0].presentationId, ref.resultSeq]) !== key) invalid();
+  }
   value.authorNote ??= null;value.authorNoteVersion ??= value.authorNote?.version ?? 0;value.noteClaims ??= {};
   note(value.authorNote);
   if (!integer(value.authorNoteVersion) || !object(value.noteClaims)) invalid();
@@ -75,8 +89,14 @@ export function canonicalContextState(state, view, { prune = false } = {}) {
     if (refs.has(key)) return true;if (!prune) invalid();return false;
   }));
   copy.baseline.representations = filterRefs(copy.baseline.representations);
-  copy.plans = copy.plans.filter(plan => { if (anchors.has(plan.anchor)) return true;if (!prune) invalid();return false; }).map(plan => ({ ...plan, representations: filterRefs(plan.representations) }));
+  copy.plans = copy.plans.filter(plan => { if (anchors.has(plan.anchor)) return true;if (!prune) invalid();return false; }).map(plan => {
+    const representations = filterRefs(plan.representations);
+    return { ...plan, representations, ...(plan.historyRefs ? { historyRefs: plan.historyRefs.filter(ref => { if (refs.has(JSON.stringify([ref.presentationId, ref.resultSeq]))) return true;if (!prune) invalid();return false; }) } : {}),
+      ...(plan.ownerRepresentationIds ? { ownerRepresentationIds: plan.ownerRepresentationIds.filter(key => Object.hasOwn(representations, key)) } : {}) };
+  });
   copy.summaries = filterRefs(copy.summaries);
+  if (copy.summaryProjectionKeys) copy.summaryProjectionKeys = filterRefs(copy.summaryProjectionKeys);
+  if (copy.summaryRefs) copy.summaryRefs = filterRefs(copy.summaryRefs);
   copy.noteClaims = Object.fromEntries(Object.entries(copy.noteClaims ?? {}).filter(([, claim]) => {
     if (anchors.has(claim.anchor) && (claim.outcomeAnchor === undefined || anchors.has(claim.outcomeAnchor)) && (claim.status !== 'consumed' || history.some(record => record.anchor === claim.outcomeAnchor && (claim.outcomePresentationId === undefined || record.source.presentationId === claim.outcomePresentationId)))) return true;if (!prune) invalid();return false;
   }));

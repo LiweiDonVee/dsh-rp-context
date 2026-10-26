@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ContextError, buildHistory, compileMaterials, projectHistoryState } from './core.mjs';
+import { validateHistoryProjection } from './history-projection.mjs';
 
 const fail = (code, message, status = 400) => { throw new ContextError(code, message, status); };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -68,11 +69,13 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
         const factReceiptId = input.factReceiptId;
         const baseModel = clone(input.baseModel ?? {});
         const sourceHistory = clone(input.history);
+        const historyProjection = input.historyProjection === undefined ? undefined : validateHistoryProjection(input.historyProjection);
         // Validate all host references before issuing a model or database call.
         buildHistory(sourceHistory);
+        const historyRefs = historyProjection === undefined ? undefined : sourceHistory.map(record => clone(record.source));
         const activeAnchors = [...new Set([...(input.activeAnchors ?? sourceHistory.map(item => item.anchor)), anchor])];
         const activePresentationAnchors = input.activePresentationAnchors;
-        let view = projectHistoryState(sourceHistory, input.presentationId === undefined ? await store.view(sessionId, { activeAnchors, activePresentationAnchors }) : await store.capturePreparation(sessionId, { presentationId: input.presentationId, anchor, activeAnchors, activePresentationAnchors }));
+        let view = projectHistoryState(sourceHistory, input.presentationId === undefined ? await store.view(sessionId, { activeAnchors, activePresentationAnchors }) : await store.capturePreparation(sessionId, { presentationId: input.presentationId, anchor, activeAnchors, activePresentationAnchors }), historyProjection);
         authorNote = input.presentationId === undefined ? null : view.authorNote;
         const settings = view.settings;
         if (!settings.enabled) fail('CONTEXT_DISABLED', 'Context preparation is disabled', 409);
@@ -81,6 +84,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
         const configs = freeze({ prepare: modelConfig(baseModel, resolved.prepare ?? both), summarize: modelConfig(baseModel, resolved.summarize ?? both) });
         const models = clone(configs);
         let representations = Object.fromEntries(Object.entries(view.representations).filter(([historyId]) => sourceHistory.some(record => record.id === historyId)));
+        const ownerRepresentationIds = new Set(view.ownerRepresentationIds ?? []);
         const withCache = () => sourceHistory.map(record => ({ ...record, ...(record.summary === undefined && Object.hasOwn(view.summaries, record.id) ? { summary: view.summaries[record.id] } : {}) }));
         let projected = buildHistory(withCache(), { recentTurns: settings.recentTurns, representations });
         const invoke = async (stage, system, payload) => {
@@ -117,7 +121,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
           for (const summary of value.summaries) {
             if (!object(summary) || Object.keys(summary).some(key => !['id', 'summary'].includes(key)) || !expected.delete(summary.id) || typeof summary.summary !== 'string' || !summary.summary.trim()) fail('INVALID_SUMMARY', 'Summary response must contain actual text for every exact active ID');
           }
-          const cached = await store.cacheSummaries(sessionId, { summaries: value.summaries, expectedRevision: view.revision });
+          const cached = await store.cacheSummaries(sessionId, { summaries: value.summaries, historyProjection, historyRefs, expectedRevision: view.revision });
           view = { ...view, revision: cached.revision, summaries: { ...view.summaries, ...Object.fromEntries(value.summaries.map(summary => [summary.id, summary.summary])) } };
           await emit('complete');
         }
@@ -224,6 +228,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
           stagedNotes.push(...appliedNotes);
           operations.push(...clone(next.databaseOperations ?? []));
           representations = nextRepresentations;
+          for (const operation of next.historyOperations ?? []) ownerRepresentationIds.delete(operation.id);
           projected = nextProjected;
           selectedIds = clone(nextSelection);
           notes = next.notes ?? notes;
@@ -237,7 +242,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
           const guidance = [notes, ...(snapshot?.notes ?? []).map(note => typeof note === 'string' ? note : note.text), ...stagedNotes.map(note => typeof note === 'string' ? note : note.text), ...(authorNote ? [`Owner writing guidance (not established facts):\n${authorNote.text}`] : [])].filter(value => typeof value === 'string' && value.length).join('\n');
           const materials = compileMaterials({ history: projected, databaseEntries: entries, notes: guidance, unresolved, maxChars: settings.maxChars });
           let databaseRevision = snapshot?.revision;
-          const saved = await store.savePlan(sessionId, { representations, unresolved, expectedRevision: view.revision, anchor, beforeCommit: async () => {
+          const saved = await store.savePlan(sessionId, { representations, unresolved, historyProjection, historyRefs, ...(historyProjection === undefined ? {} : { ownerRepresentationIds: [...ownerRepresentationIds] }), expectedRevision: view.revision, anchor, beforeCommit: async () => {
             abort(signal);
             if (database) {
               sameDatabase(await database.snapshot());
@@ -246,7 +251,7 @@ export function createPlanner({ store, callModel, resolveModels, publish } = {})
             }
           } });
           const recordedCandidates = candidateList(candidates).map(({ excerpt: _excerpt, ...item }) => item);
-          const result = freeze({ id, materials, candidates: recordedCandidates, ...(authorNote ? { authorNote: { id: authorNote.id, version: authorNote.version, claimId: authorNote.claimedBy } } : {}), ...(database ? { database: { ...(v2 ? { binding: clone(snapshot.binding) } : { databaseId: snapshot.databaseId, version: snapshot.version }), revision: databaseRevision, entryRefs: entries.map(entry => v2 ? { ...clone(entry.ref), version: entry.version } : { id: entry.id, version: entry.version }) } } : {}), models: clone(models), steps: step, degraded: [...degraded], revision: saved.revision });
+          const result = freeze({ id, materials, candidates: recordedCandidates, ...(historyProjection ? { historyProjection } : {}), ...(authorNote ? { authorNote: { id: authorNote.id, version: authorNote.version, claimId: authorNote.claimedBy } } : {}), ...(database ? { database: { ...(v2 ? { binding: clone(snapshot.binding) } : { databaseId: snapshot.databaseId, version: snapshot.version }), revision: databaseRevision, entryRefs: entries.map(entry => v2 ? { ...clone(entry.ref), version: entry.version } : { id: entry.id, version: entry.version }) } } : {}), models: clone(models), steps: step, degraded: [...degraded], revision: saved.revision });
           await emit('complete');
           return result;
         }

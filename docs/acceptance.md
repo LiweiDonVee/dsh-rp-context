@@ -1,5 +1,15 @@
 # Context 验收记录
 
+## 0.3.0 Context-A/B — 有效材料与 canonical note proof checkpoint
+
+2026-10-26，按事实审批/两层重新生成冻结契约 C1、C7 实施。既有 68 host +19 UI clean 基线直接复用，没有重跑。新增 14 项内核和 3 项 UI 回归，focused RED→GREEN 后最终 `pnpm check` 通过 **82 host +22 UI =104**，lint/build 通过。`pnpm package` exit 0，包 SHA256：`a2c902961a274b6f8ad5883121005d80e9b4a80314d36358f66542abeb72329c`。打包脚本保留既有 Node DEP0190 非失败提示。
+
+用真实 canonical parser 和契约形状的 LastStep/Database fixtures 核验：修订事实后的选材排除旧正文/摘要/自动未决项；新事实未写作时不沿用旧正文；普通追加保留 exact-ref 摘要和计划；手动表示按仍有效来源保留。折叠不释放已消费注，真实移除原接受结果仍回 pending，新 pending 注不被旧冻结材料的正文接受消费。prepare 冻结当时响应的 C1 `historyProjection`，材料面板显示保存依据或旧 receipt“未记录”。缺有效 reader 时 state 明确 `historyError`，owner 设置与注控件继续可用；真实本故事 DB captured group 可识别尚无正文的新事实，未接受的 metadata 不阻断 legacy 路径。
+
+transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要求原 canonical finishing result + LastStep 冻结 claim；有效投影不能制造证明。原 restore preflight、journal、strict proof、causal fork 和 R24 export 无嵌套 maintenance 测试保持通过。
+
+此 checkpoint 是内核/UI 与可安装包证据，尚未运行新 GM/Database/LastStep 三 owner 的真实原生组合。该联测由协调者在独立 spec/quality 审查后安排；不以 typed fixtures 冒充原生接受或真实工具零重放证明。
+
 ## 同 Snapshot 冷态 preflight 修复 — T9
 
 七包 rev3 在所有 owner 已恢复、尚未激活的 pending 状态重启后，Context preflight 把任何已有 Session row 直接判为冲突。仅修改 preflight：严格验证并比较完整规范化 row，相同状态支持，设置、注、计划、缓存的真实差异仍拒绝。restoreState 的新 job 冲突、journal 身份、严格 proof 与同任务无覆写路径保持。
