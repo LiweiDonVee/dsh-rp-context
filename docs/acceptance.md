@@ -16,6 +16,10 @@ transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要�
 
 focused effective/store/transfer **44/44**，本轮唯一完整 `pnpm check` **90 host +22 UI =112 PASS**，lint/build 通过。`pnpm package` exit 0，新 0.3.0 包 SHA256：`e39c4c0555edbb8ac01e66747670374638cfb53ff4c8ff0acf048a5508dd1cd6`；替代上一个 checkpoint 包，既有 DEP0190 提示保持。无 SDK/native probe 或付费模型调用，待同 reviewer 对固定修复差异复核。
 
+### 审查 fix2 — canonical DTO 校验在 owner catch 外
+
+fix1 scoped review 的唯一 F1 先以 `{records:null}` 重现 1 fail/1 显式缺依赖 preservation pass。只把 canonical DTO 映射/校验移到 owner await 的兼容 catch 外，保留明确 owner 缺依赖 fallback 和原异常透传；不改 C14、fork、core exact、prior key 或 validator。8 项定点用例 GREEN，本轮唯一完整 `pnpm check` **92 host +22 UI =114 PASS**，lint/build/package 通过。当前 0.3.0 包 SHA256：`02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。未运行 native/兄弟仓库；待固定修复差异复核。
+
 ## 同 Snapshot 冷态 preflight 修复 — T9
 
 七包 rev3 在所有 owner 已恢复、尚未激活的 pending 状态重启后，Context preflight 把任何已有 Session row 直接判为冲突。仅修改 preflight：严格验证并比较完整规范化 row，相同状态支持，设置、注、计划、缓存的真实差异仍拒绝。restoreState 的新 job 冲突、journal 身份、严格 proof 与同任务无覆写路径保持。

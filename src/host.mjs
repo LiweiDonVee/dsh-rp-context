@@ -49,8 +49,10 @@ export async function createContextHost(ctx,options={}){
     const view=await viewFor(input,signal);await ensure(view)
     const reader=ctx.get?.('rpLastStep');let records
     if(typeof reader?.narratives==='function'){
-      try{records=ownerNarratives((await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records)}
+      let response
+      try{response=await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})}
       catch(error){if(signal?.aborted||error?.code!=='EFFECTIVE_HISTORY_UNAVAILABLE')throw error;records=narrativeHistory(view)}
+      if(records===undefined)records=ownerNarratives(response.records)
     }else records=narrativeHistory(view)
     buildHistory(records)
     const projected=await noteProjection(input.sessionId,view,signal,records)

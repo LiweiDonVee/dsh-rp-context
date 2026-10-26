@@ -293,3 +293,18 @@ test('fork mapping does not rewrite a different canonical source with the same p
   const { child } = await inheritedFixture(t, true), prepared = await child.prepare();
   assert.equal(prepared.materials.history[0].mode, 'full');assert.deepEqual(prepared.materials.unresolved, []);
 });
+
+test('a malformed canonical DTO rejects before the effective reader instead of entering the owner dependency fallback', async t => {
+  const f = await fixture(t), record = append(f, 'accepted', 'Accepted source');select(f, 'valid-effective-basis', [record]);
+  f.last.narratives = async () => ({ records: null });
+  await assert.rejects(f.service.state({ sessionId: 'story', agent: f.agent }), { code: 'EFFECTIVE_HISTORY_UNAVAILABLE' });
+  assert.equal(f.historyReads, 0);assert.equal(f.calls.length, 0);assert.equal((await f.store.contentRevision()).revision, 0);
+});
+
+test('an explicit canonical owner dependency error retains raw proof fallback and selected history', async t => {
+  const f = await fixture(t), record = append(f, 'accepted', 'Accepted source');select(f, 'valid-effective-basis', [record]);
+  await f.service.setAuthorNote({ sessionId: 'story', text: 'Available pending owner note', expectedRevision: 0 });
+  f.last.narratives = async () => { throw Object.assign(new Error('Canonical owner dependency missing'), { code: 'EFFECTIVE_HISTORY_UNAVAILABLE' }); };
+  const state = await f.service.state({ sessionId: 'story', agent: f.agent });
+  assert.equal(state.historyError, undefined);assert.equal(state.history[0].text, 'Accepted source');assert.equal(state.authorNote.text, 'Available pending owner note');assert.equal(f.historyReads, 1);
+});
