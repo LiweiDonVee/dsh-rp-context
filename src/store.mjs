@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ContextError, validateSettings } from './core.mjs';
 import { transferSessionIds, validateRestoreEnvelope, validateTransferState, transferFingerprint } from './transfer.mjs';
 import { validateHistoryProjection, validateHistoryRefs } from './history-projection.mjs';
@@ -262,21 +263,29 @@ export async function createContextStore({ directory }) {
         return project(record);
       });
     },
-    forkSession(fromId, toId, { activeAnchors, activePresentationAnchors, expectedRevision } = {}) {
+    forkSession(fromId, toId, { activeAnchors, activePresentationAnchors, inheritedHistoryRefs = [], expectedRevision } = {}) {
       return mutate(expectedRevision, state => {
         const target = key(toId);
         if (fromId === toId || Object.hasOwn(state.sessions, target)) fail('SESSION_EXISTS', 'Fork requires an independent new child session', 409);
         const parent = state.sessions[key(fromId)] ?? fresh();
         const active = anchors(activeAnchors);
+        const inherited = new Map(validateHistoryRefs(inheritedHistoryRefs).filter(ref => ref.sessionId === toId && (active === undefined || active.has(ref.assistantMessageId))).map(ref => [JSON.stringify([ref.presentationId, ref.resultSeq]), ref]));
+        const childRef = ref => {
+          const actual = inherited.get(JSON.stringify([ref.presentationId, ref.resultSeq]));
+          // Only the authenticated child's real canonical prefix can rebind a
+          // copied parent ref. Preserve its owner schema and every other field.
+          return ref.sessionId === fromId && actual && Object.entries(ref).every(([field, value]) => field === 'sessionId' || isDeepStrictEqual(value, actual[field])) ? { ...ref, sessionId: toId } : ref;
+        };
         const child = fresh();
         child.settings = structuredClone(parent.settings);
         // Preserve causal anchors across forks so a child can rewind further
         // into the inherited prefix instead of reviving a flattened plan.
         child.baseline = structuredClone(parent.baseline);
         child.plans = structuredClone(parent.plans.filter(plan => active === undefined || active.has(plan.anchor)));
+        for (const plan of child.plans) if (plan.historyRefs) plan.historyRefs = plan.historyRefs.map(childRef);
         child.summaries = structuredClone(parent.summaries);
         if (parent.summaryProjectionKeys) child.summaryProjectionKeys = structuredClone(parent.summaryProjectionKeys);
-        if (parent.summaryRefs) child.summaryRefs = structuredClone(parent.summaryRefs);
+        if (parent.summaryRefs) child.summaryRefs = Object.fromEntries(Object.entries(structuredClone(parent.summaryRefs)).map(([id, ref]) => [id, childRef(ref)]));
         const pending = projectAuthorNote(parent, active, anchors(activePresentationAnchors));
         if (pending?.status === 'pending') {
           child.authorNote = { id: randomUUID(), text: pending.text, version: 1, status: 'pending' };

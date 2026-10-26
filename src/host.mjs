@@ -39,7 +39,7 @@ export async function createContextHost(ctx,options={}){
     const work=inheritance.then(async()=>{
       if(known.has(view.sessionId))return
       const{state:initial,activePresentationAnchors}=await noteProjection(view.parentSession,view)
-      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors,expectedRevision:initial.revision})}
+      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors,inheritedHistoryRefs:narrativeHistory(view).map(record=>record.source),expectedRevision:initial.revision})}
       catch(error){if(error.code!=='SESSION_EXISTS')throw error}
       known.add(view.sessionId)
     })
@@ -50,7 +50,7 @@ export async function createContextHost(ctx,options={}){
     const reader=ctx.get?.('rpLastStep');let records
     if(typeof reader?.narratives==='function'){
       try{records=ownerNarratives((await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records)}
-      catch(error){if(signal?.aborted||error?.code!==undefined||[401,403].includes(error?.status))throw error;records=narrativeHistory(view)}
+      catch(error){if(signal?.aborted||error?.code!=='EFFECTIVE_HISTORY_UNAVAILABLE')throw error;records=narrativeHistory(view)}
     }else records=narrativeHistory(view)
     buildHistory(records)
     const projected=await noteProjection(input.sessionId,view,signal,records)
@@ -60,9 +60,7 @@ export async function createContextHost(ctx,options={}){
     const captured=canonical??await canonicalCurrent(input,signal),reader=ctx.get?.('rpLastStep')
     let history=captured.history,historyProjection
     if(typeof reader?.storyHistory==='function'){
-      let response
-      try{response=await reader.storyHistory({sessionId:input.sessionId,agent:input.agent,signal})}
-      catch(error){if(signal?.aborted||error?.code!==undefined||[401,403].includes(error?.status))throw error;effectiveHistoryUnavailable()}
+      const response=await reader.storyHistory({sessionId:input.sessionId,agent:input.agent,signal})
       const selected=captureStoryHistory(response);history=selected.history;historyProjection=selected.historyProjection
     }else{
       if(hasNarrativeRevisions(captured.view))effectiveHistoryUnavailable()

@@ -32,9 +32,13 @@ rpContext.prepare 接收 sessionId、真实 agent、packet、baseModel、signal�
 
 来源和表示计划跟随回合和分支，fork 继承有效计划的因果前缀，summary cache 按规范叙事 ID 保留但不会凭缓存重新制造已经失效的历史。设置、计划和缓存使用 revision 写队列及原子文件更新。
 
+fork 只把复制的父 ref 与真实 child canonical prefix 逐字段核对后，将其 sessionId 重映射为 child；其他字段不变，也不全局忽略 sessionId。旧计划保留 prior basis 供因果回退，当前投影与首次 child prepare 则使用 LastStep 实际 child key，并保存新的 child basis。未验证或已被替代的来源不重映射。
+
 有效历史下，plan 保存可选 `historyProjection` 与 `historyRefs`，以 `ownerRepresentationIds` 标记手动表示；摘要缓存用 `summaryProjectionKeys` 与 `summaryRefs` 保存 exact narrative ID 的投影及真实来源依据。原选中 ref/事实组被替代或移除时自动表示与未决 carry 不进入请求，重新从当前选中正文和当前 packet 准备。普通追加保留计划；精确仍选中的 ref 可复用实际摘要，手动表示也按 exact ref 保留。已有 owner 设置与 pending note 保留。投影 key 是缓存依据，不是事实或 canonical 接受权限。
 
 无 `storyHistory` 时，Context 检查真实 canonical 版本元数据与可用的本故事 Database `factReviewProjection`；active/pending captured group 即使没有正文也要求有效 reader。全局 capability 本身不要求 reader，空 projection 与纯 legacy 日志可保留原路径。`state` 只在 `EFFECTIVE_HISTORY_UNAVAILABLE` 时提供 `historyError`、空材料历史与真实设置/注/revision，面板明确不可用并保留 owner 控件；授权、损坏及其他来源错误仍透传。
+
+已存在 owner reader 抛出的未知异常（包括无 code 的 SyntaxError/TypeError）原样透传，不改写成缺依赖或转回 raw parser。canonical reader 只有明确报告 `EFFECTIVE_HISTORY_UNAVAILABLE` 时可使用独立 parser；缺方法仍按本故事能力决定 legacy 路径。
 
 ## 作者注与材料检查
 

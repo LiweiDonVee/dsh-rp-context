@@ -10,6 +10,12 @@ transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要�
 
 此 checkpoint 是内核/UI 与可安装包证据，尚未运行新 GM/Database/LastStep 三 owner 的真实原生组合。该联测由协调者在独立 spec/quality 审查后安排；不以 typed fixtures 冒充原生接受或真实工具零重放证明。
 
+### 审查 fix1 — verified fork refs / owner source error boundary
+
+独立审查 I1/I2 的 focused RED 分别为 fork 2 fail/1 preservation pass、reader exception 4 fail/1 preservation pass。修复只将已核对真实 child canonical prefix 的 copied parent refs 重新绑定 child sessionId；core 仍逐字段严格比较，首次 child prepare 保存实际 child projectionKey，真实替代/移除仍丢自动 carry。未知 owner reader 异常原样抛回，只有缺方法或明确 `EFFECTIVE_HISTORY_UNAVAILABLE` 才使用相应兼容路径。原卸载 note fixture 改为显式缺依赖码。
+
+focused effective/store/transfer **44/44**，本轮唯一完整 `pnpm check` **90 host +22 UI =112 PASS**，lint/build 通过。`pnpm package` exit 0，新 0.3.0 包 SHA256：`e39c4c0555edbb8ac01e66747670374638cfb53ff4c8ff0acf048a5508dd1cd6`；替代上一个 checkpoint 包，既有 DEP0190 提示保持。无 SDK/native probe 或付费模型调用，待同 reviewer 对固定修复差异复核。
+
 ## 同 Snapshot 冷态 preflight 修复 — T9
 
 七包 rev3 在所有 owner 已恢复、尚未激活的 pending 状态重启后，Context preflight 把任何已有 Session row 直接判为冲突。仅修改 preflight：严格验证并比较完整规范化 row，相同状态支持，设置、注、计划、缓存的真实差异仍拒绝。restoreState 的新 job 冲突、journal 身份、严格 proof 与同任务无覆写路径保持。

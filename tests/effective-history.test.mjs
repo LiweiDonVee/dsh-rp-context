@@ -233,3 +233,63 @@ test('unaccepted version metadata cannot turn a legacy story into a required eff
   f.events.push({ seq: 4, type: 'tool/result', surfaceOp: 'append', data: { meta: { rpLastStep: { schemaVersion: 1, record: { id: 'unaccepted', status: 'complete', text: 'Not a canonical narrative', narrativeVersion: { schemaVersion: 1, groupId: 'unaccepted-group', kind: 'original' } } } } } });
   assert.deepEqual((await prepare(f)).materials.recentProse, ['Accepted legacy prose']);
 });
+
+for (const method of ['narratives', 'storyHistory']) for (const ErrorType of [SyntaxError, TypeError]) {
+  test(`${method} preserves the original unencoded ${ErrorType.name} instead of falling back or reporting a missing reader`, async t => {
+    const f = await fixture(t), record = append(f, 'accepted', 'Accepted source');select(f, 'source-error-basis', [record]);
+    const sourceError = new ErrorType('Malformed owner source payload');
+    f.last[method] = async () => { throw sourceError; };
+    await assert.rejects(f.service.state({ sessionId: 'story', agent: f.agent }), error => error === sourceError);
+    assert.equal(f.calls.length, 0);
+  });
+}
+
+test('an available effective reader may explicitly report its missing dependency without losing owner controls', async t => {
+  const f = await fixture(t);append(f, 'accepted', 'Accepted source');
+  await f.service.setAuthorNote({ sessionId: 'story', text: 'Pending owner choice', expectedRevision: 0 });
+  f.last.storyHistory = async () => { throw Object.assign(new Error('Effective owner dependency missing'), { code: 'EFFECTIVE_HISTORY_UNAVAILABLE' }); };
+  const state = await f.service.state({ sessionId: 'story', agent: f.agent });
+  assert.equal(state.historyError.code, 'EFFECTIVE_HISTORY_UNAVAILABLE');assert.equal(state.authorNote.text, 'Pending owner choice');assert.equal(state.revision, 1);
+});
+
+async function inheritedFixture(t, mismatchedSource = false) {
+  const parent = await fixture(t), original = append(parent, 'inherited', 'Verified inherited prose');
+  const ownerRef = ({ callId: _localOnlyCallId, ...ref }) => ref;
+  original.ref = ownerRef(original.ref);select(parent, 'actual-parent-key', [original]);
+  const ref = { ...original.ref, ...(mismatchedSource ? { callId: 'different-call' } : {}) }, basis = { schemaVersion: 1, projectionKey: 'actual-parent-key', selectedPresentationIds: ['inherited'], activeFactReceiptIds: ['fact-old'] };
+  await parent.store.savePlan('story', { anchor: original.ref.assistantMessageId, representations: { [original.id]: { mode: 'index' } }, unresolved: ['Inherited unresolved question'], historyProjection: basis, historyRefs: [ref], ownerRepresentationIds: [original.id], expectedRevision: 0 });
+  await parent.store.cacheSummaries('story', { summaries: [{ id: original.id, summary: 'Verified inherited summary' }], historyProjection: basis, historyRefs: [ref], expectedRevision: 1 });
+  const events = structuredClone(parent.events), agent = { session: { id: 'child', header: { id: 'child', parentSession: 'story' }, snapshotEvents: () => events }, ctx: { tools: { register: () => () => {} } } };
+  const canonical = () => narrativeHistory(projectSession({ header: agent.session.header, records: events })).map(({ source, anchor: _anchor, ...record }) => ({ ...record, ref: ownerRef(source) }));
+  const child = { events, agent, canonical, projection: null };select(child, 'actual-child-key', canonical());
+  parent.ctx.agents.get = id => id === 'story' ? parent.agent : id === 'child' ? agent : undefined;
+  parent.last.narratives = async ({ sessionId }) => ({ records: sessionId === 'child' ? canonical() : parent.canonical() });
+  parent.last.storyHistory = async ({ sessionId }) => structuredClone(sessionId === 'child' ? child.projection : parent.projection);
+  child.prepare = () => parent.service.prepare({ sessionId: 'child', agent, baseModel: { provider: 'fixture', model: 'context' }, packet: { playerAction: 'Child action' } });
+  return { parent, child, original };
+}
+
+for (const change of ['replacement', 'removal']) test(`first child prepare preserves verified inherited material and ${change} still drops automatic carry`, async t => {
+  const { parent, child, original } = await inheritedFixture(t);
+  const prepared = await child.prepare();
+  assert.equal(prepared.materials.history[0].mode, 'index');assert.deepEqual(prepared.materials.unresolved, ['Inherited unresolved question']);assert.equal(prepared.historyProjection.projectionKey, 'actual-child-key');
+  const state = await parent.service.state({ sessionId: 'child', agent: child.agent });
+  assert.equal(state.history[0].summary, 'Verified inherited summary');
+  const inherited = (await parent.store.exportState(['child'])).payload.sessions[0].state;
+  assert.equal(inherited.summaryRefs[original.id].sessionId, 'child');assert.equal(inherited.plans.at(-1).historyRefs[0].sessionId, 'child');assert.equal(inherited.plans.at(-1).historyProjection.projectionKey, 'actual-child-key');
+  const parentState = (await parent.store.exportState(['story'])).payload.sessions[0].state;
+  assert.equal(parentState.summaryRefs[original.id].sessionId, 'story');assert.equal(parentState.plans[0].historyProjection.projectionKey, 'actual-parent-key');
+  if (change === 'replacement') {
+    const revised = append(child, 'revised-child', 'New child prose', 'fact-new', 2);select(child, 'revised-child-key', [revised], 'fact-new');
+  } else {
+    child.events.push({ seq: child.events.length, type: 'user/message', surfaceOp: { op: 'replace', startSeq: original.ref.resultSeq, endSeq: original.ref.resultSeq }, data: { id: 'remove-inherited', source: { kind: 'runtime-context' }, content: [] } });
+    select(child, 'removed-child-key', [], null);
+  }
+  const changed = await child.prepare();
+  assert.deepEqual(changed.materials.unresolved, []);assert.equal(changed.materials.history.some(record => record.id === original.id), false);
+});
+
+test('fork mapping does not rewrite a different canonical source with the same presentation ID', async t => {
+  const { child } = await inheritedFixture(t, true), prepared = await child.prepare();
+  assert.equal(prepared.materials.history[0].mode, 'full');assert.deepEqual(prepared.materials.unresolved, []);
+});
