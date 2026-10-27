@@ -1,5 +1,11 @@
 # Context 验收记录
 
+## 当前 0.3.0 源码审查状态 — 2026-10-27
+
+产品源码 `28f254409fbe21ab2d348f6de358d28e2d913305` 已通过 fix2 scoped spec／quality 复核，先前 I1、I2 与 catch 范围 F1 已关闭。当前冻结包 SHA256 为 `02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`，对应本次 Markdown 更新前的产品包。作者记录的最终组件检查为 92 host +22 UI、lint/build/package 通过；本次只更新文档，没有重跑检查。
+
+新事实审批／两层重生的组合 native 验收尚未完成，组件 fixture 与历史原生结果不能代替它。当前新组合与可选 legacy 路径见[兼容说明](compatibility.md)。下面保留各阶段实际记录的包哈希、数量和边界。
+
 ## 0.3.0 Context-A/B — 有效材料与 canonical note proof checkpoint
 
 2026-10-26，按事实审批/两层重新生成冻结契约 C1、C7 实施。既有 68 host +19 UI clean 基线直接复用，没有重跑。新增 14 项内核和 3 项 UI 回归，focused RED→GREEN 后最终 `pnpm check` 通过 **82 host +22 UI =104**，lint/build 通过。`pnpm package` exit 0，包 SHA256：`a2c902961a274b6f8ad5883121005d80e9b4a80314d36358f66542abeb72329c`。打包脚本保留既有 Node DEP0190 非失败提示。
@@ -14,11 +20,11 @@ transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要�
 
 独立审查 I1/I2 的 focused RED 分别为 fork 2 fail/1 preservation pass、reader exception 4 fail/1 preservation pass。修复只将已核对真实 child canonical prefix 的 copied parent refs 重新绑定 child sessionId；core 仍逐字段严格比较，首次 child prepare 保存实际 child projectionKey，真实替代/移除仍丢自动 carry。未知 owner reader 异常原样抛回，只有缺方法或明确 `EFFECTIVE_HISTORY_UNAVAILABLE` 才使用相应兼容路径。原卸载 note fixture 改为显式缺依赖码。
 
-focused effective/store/transfer **44/44**，本轮唯一完整 `pnpm check` **90 host +22 UI =112 PASS**，lint/build 通过。`pnpm package` exit 0，新 0.3.0 包 SHA256：`e39c4c0555edbb8ac01e66747670374638cfb53ff4c8ff0acf048a5508dd1cd6`；替代上一个 checkpoint 包，既有 DEP0190 提示保持。无 SDK/native probe 或付费模型调用，待同 reviewer 对固定修复差异复核。
+focused effective/store/transfer **44/44**，本轮唯一完整 `pnpm check` **90 host +22 UI =112 PASS**，lint/build 通过。`pnpm package` exit 0，新 0.3.0 包 SHA256：`e39c4c0555edbb8ac01e66747670374638cfb53ff4c8ff0acf048a5508dd1cd6`；替代上一个 checkpoint 包，既有 DEP0190 提示保持。无 SDK/native probe 或付费模型调用。后续 scoped review 的遗留 F1 由下节 fix2 关闭。
 
 ### 审查 fix2 — canonical DTO 校验在 owner catch 外
 
-fix1 scoped review 的唯一 F1 先以 `{records:null}` 重现 1 fail/1 显式缺依赖 preservation pass。只把 canonical DTO 映射/校验移到 owner await 的兼容 catch 外，保留明确 owner 缺依赖 fallback 和原异常透传；不改 C14、fork、core exact、prior key 或 validator。8 项定点用例 GREEN，本轮唯一完整 `pnpm check` **92 host +22 UI =114 PASS**，lint/build/package 通过。当前 0.3.0 包 SHA256：`02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。未运行 native/兄弟仓库；待固定修复差异复核。
+fix1 scoped review 的唯一 F1 先以 `{records:null}` 重现 1 fail/1 显式缺依赖 preservation pass。只把 canonical DTO 映射/校验移到 owner await 的兼容 catch 外，保留明确 owner 缺依赖 fallback 和原异常透传；不改 C14、fork、core exact、prior key 或 validator。8 项定点用例 GREEN，本轮唯一完整 `pnpm check` **92 host +22 UI =114 PASS**，lint/build/package 通过。当前 0.3.0 包 SHA256：`02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。未运行 native/兄弟仓库；固定修复差异的 scoped spec／quality 复核已通过。
 
 ## 同 Snapshot 冷态 preflight 修复 — T9
 
