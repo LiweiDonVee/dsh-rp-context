@@ -7,10 +7,12 @@ import {createModelCaller,resolveModelConfig} from './models.mjs'
 import {projectSession,createOwnerReader,narrativeHistory} from './session.mjs'
 import {createContextRoutes} from './routes.mjs'
 import {transferSessionIds,validateTransferState,canonicalContextState} from './transfer.mjs'
+import {captureStoryHistory,ownerNarratives,hasNarrativeRevisions,effectiveHistoryUnavailable} from './history-projection.mjs'
 
 export const name='rp-context'
 export const inject=['connection','typertGateway','agents','llm']
 const clone=value=>structuredClone(value)
+const publicState=({historyProjection:_basis,historyRefs:_refs,ownerRepresentationIds:_ownerIds,summaryRefs:_summaryRefs,summaryProjectionKeys:_cacheBasis,...state})=>state
 const metadata=record=>({id:record.id,turn:record.turn,mode:record.mode,source:record.source,...record.summary?{summary:record.summary}:{}})
 const participant={id:'rp-context',nodes:[{id:'prepare',label:'RP 上下文与数据库选材',kind:'model',control:'route'},{id:'summarize',label:'RP 历史摘要',kind:'model',control:'route'}],edges:[{id:'prepared',from:'prepare',to:'host.end',label:'材料已冻结'}]}
 
@@ -37,24 +39,43 @@ export async function createContextHost(ctx,options={}){
     const work=inheritance.then(async()=>{
       if(known.has(view.sessionId))return
       const{state:initial,activePresentationAnchors}=await noteProjection(view.parentSession,view)
-      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors,expectedRevision:initial.revision})}
+      try{await store.forkSession(view.parentSession,view.sessionId,{activeAnchors:view.activeAnchors,activePresentationAnchors,inheritedHistoryRefs:narrativeHistory(view).map(record=>record.source),expectedRevision:initial.revision})}
       catch(error){if(error.code!=='SESSION_EXISTS')throw error}
       known.add(view.sessionId)
     })
     inheritance=work.catch(()=>{});return work
   }
-  async function current(input,signal){
+  async function canonicalCurrent(input,signal){
     const view=await viewFor(input,signal);await ensure(view)
     const reader=ctx.get?.('rpLastStep');let records
     if(typeof reader?.narratives==='function'){
-      try{records=(await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})).records.map(record=>({...record,anchor:record.ref?.assistantMessageId,source:record.ref}))}
-      catch(error){if(signal?.aborted)throw error;records=narrativeHistory(view)}
+      let response
+      try{response=await reader.narratives({sessionId:input.sessionId,agent:input.agent,signal})}
+      catch(error){if(signal?.aborted||error?.code!=='EFFECTIVE_HISTORY_UNAVAILABLE')throw error;records=narrativeHistory(view)}
+      if(records===undefined)records=ownerNarratives(response.records)
     }else records=narrativeHistory(view)
     buildHistory(records)
     const projected=await noteProjection(input.sessionId,view,signal,records)
-    const state=projectHistoryState(records,projected.state)
-    const history=records.map(record=>({...record,...Object.hasOwn(state.summaries,record.id)?{summary:state.summaries[record.id]}:{}}))
-    return{view,state,history,activePresentationAnchors:projected.activePresentationAnchors}
+    return{view,state:projected.state,history:records,activePresentationAnchors:projected.activePresentationAnchors}
+  }
+  async function current(input,signal,canonical){
+    const captured=canonical??await canonicalCurrent(input,signal),reader=ctx.get?.('rpLastStep')
+    let history=captured.history,historyProjection
+    if(typeof reader?.storyHistory==='function'){
+      const response=await reader.storyHistory({sessionId:input.sessionId,agent:input.agent,signal})
+      const selected=captureStoryHistory(response);history=selected.history;historyProjection=selected.historyProjection
+    }else{
+      if(hasNarrativeRevisions(captured.view))effectiveHistoryUnavailable()
+      const db=ctx.get?.('rpDatabase')
+      if(typeof db?.factReviewProjection==='function'){
+        const projection=await db.factReviewProjection({sessionId:input.sessionId,agent:input.agent,signal})
+        if(projection?.schemaVersion!==1||!Array.isArray(projection.groups)||projection.groups.some(group=>!group||typeof group.roundId!=='string'||!group.roundId.trim()||group.activeReceiptId!==null&&typeof group.activeReceiptId!=='string'||group.pendingCandidateId!==null&&typeof group.pendingCandidateId!=='string'))throw new ContextError('INVALID_HISTORY','The Database fact-review projection is invalid',503)
+        if(projection.groups.some(group=>group.activeReceiptId!==null||group.pendingCandidateId!==null))effectiveHistoryUnavailable()
+      }
+    }
+    const state=projectHistoryState(history,captured.state,historyProjection)
+    history=history.map(record=>({...record,...Object.hasOwn(state.summaries,record.id)?{summary:state.summaries[record.id]}:{}}))
+    return{...captured,state,history,...historyProjection?{historyProjection}:{}}
   }
   function baseFor(input,view){
     if(input.baseModel)return resolveModelConfig(clone(input.baseModel))
@@ -164,12 +185,21 @@ export async function createContextHost(ctx,options={}){
       for(const id of result.restoredSessionIds){known.add(id);notify(id)}
       return result
     }),
-    state:input=>run(input.signal,async signal=>{const{state,history}=await current(input,signal);const representations=Object.fromEntries(Object.entries(state.representations).filter(([id])=>history.some(record=>record.id===id)));return{...state,representations,history:buildHistory(history,{recentTurns:state.settings.recentTurns,representations}),scope:'preparation-and-writer'}}),
-    configure:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.configure(input.sessionId,input);notify(input.sessionId);return result}),
-    authorNote:input=>run(input.signal,async signal=>(await current(input,signal)).state.authorNote??null),
+    state:input=>run(input.signal,async signal=>{
+      const canonical=await canonicalCurrent(input,signal)
+      let projected
+      try{projected=await current(input,signal,canonical)}catch(error){
+        if(error?.code!=='EFFECTIVE_HISTORY_UNAVAILABLE')throw error
+        return{...publicState(canonical.state),representations:{},summaries:{},unresolved:[],history:[],historyError:{code:error.code,message:error.message},scope:'preparation-and-writer'}
+      }
+      const{state,history}=projected,representations=Object.fromEntries(Object.entries(state.representations).filter(([id])=>history.some(record=>record.id===id)))
+      return{...publicState(state),representations,history:buildHistory(history,{recentTurns:state.settings.recentTurns,representations}),scope:'preparation-and-writer'}
+    }),
+    configure:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.configure(input.sessionId,input);notify(input.sessionId);return publicState(result)}),
+    authorNote:input=>run(input.signal,async signal=>(await canonicalCurrent(input,signal)).state.authorNote??null),
     setAuthorNote:input=>run(input.signal,async signal=>{await ensure(await viewFor(input,signal));const result=await store.setAuthorNote(input.sessionId,input);notify(input.sessionId);return result}),
     presentationOutcome:input=>run(input.signal,async signal=>{
-      const{history,view}=await current(input,signal)
+      const{history,view}=await canonicalCurrent(input,signal)
       const accepted=history.find(record=>record.source.presentationId===input.presentationId)
       if(input.status==='accepted'&&!accepted)throw new ContextError('PRESENTATION_NOT_ACCEPTED','Only an active canonical accepted presentation can consume its author note',409)
       if(input.status==='accepted'){
@@ -195,17 +225,18 @@ export async function createContextHost(ctx,options={}){
     }),
     search:input=>run(input.signal,async signal=>{const{state,history}=await current(input,signal);if(typeof input.query!=='string')throw new ContextError('INVALID_QUERY','Search requires text');const words=input.query.normalize('NFKC').toLocaleLowerCase().split(/\s+/u).filter(Boolean);return{revision:state.revision,matches:history.map(record=>({...metadata({...record,mode:'index'}),score:words.reduce((count,word)=>count+Number([record.action,record.text,record.summary??''].join('\n').toLocaleLowerCase().includes(word)),0)})).filter(record=>record.score>0).sort((a,b)=>b.score-a.score).slice(0,20)}}),
     represent:input=>run(input.signal,async signal=>{
-      const{state,history,view}=await current(input,signal)
+      const{state,history,view,historyProjection}=await current(input,signal)
       if(!view.currentAnchor)throw new ContextError('ANCHOR_REQUIRED','History edits require a current story turn',409)
       if(!history.some(record=>record.id===input.historyId))throw new ContextError('HISTORY_NOT_FOUND','Narrative is not active in this branch',404)
       const representations={...state.representations,[input.historyId]:{mode:input.mode,...input.summary!==undefined?{summary:input.summary}:{}}}
       const filtered=Object.fromEntries(Object.entries(representations).filter(([id])=>history.some(record=>record.id===id)))
       const projected=buildHistory(history,{recentTurns:state.settings.recentTurns,representations:filtered})
       if(projected.find(record=>record.id===input.historyId)?.needsSummary)throw new ContextError('MISSING_SUMMARY','Generate an actual summary before folding this narrative',409)
-      const result=await store.savePlan(input.sessionId,{representations:filtered,unresolved:state.unresolved,anchor:view.currentAnchor,expectedRevision:input.expectedRevision});notify(input.sessionId);return result
+      const result=await store.savePlan(input.sessionId,{representations:filtered,unresolved:state.unresolved,historyProjection,historyRefs:history.map(record=>record.source),ownerRepresentationIds:[...new Set([...(state.ownerRepresentationIds??[]),input.historyId])],anchor:view.currentAnchor,expectedRevision:input.expectedRevision});notify(input.sessionId);return publicState(result)
     }),
     prepare:input=>run(input.signal,async signal=>{
-      const{state,history,view,activePresentationAnchors}=await current(input,signal);if(!state.settings.enabled)return null
+      const canonical=await canonicalCurrent(input,signal);if(!canonical.state.settings.enabled)return null
+      const{history,view,activePresentationAnchors,historyProjection}=await current(input,signal,canonical)
       if(!view.currentAnchor)throw new ContextError('ANCHOR_REQUIRED','Preparation requires the current Agent turn',409)
       const db=ctx.get?.('rpDatabase');let database
       if(db?.apiVersion===2&&typeof db.materialAccess!=='function')throw new ContextError('DATABASE_CAPABILITY_UNAVAILABLE','Database v2 materialAccess is required for qualified material preparation',503)
@@ -216,7 +247,7 @@ export async function createContextHost(ctx,options={}){
         commit:args=>db.patch({...args,sessionId:input.sessionId,agent:input.agent,signal}),
       }}
       const planner=createPlanner({store,callModel:invoke,resolveModels:({sessionId})=>routesFor(sessionId),publish:event=>{if(event.status==='prepared')notify(input.sessionId);notify(input.sessionId,{...event,type:'stage'});try{ctx.emit('rp-context/stage',{...event,sessionId:input.sessionId})}catch{/* Optional UI observer. */}}})
-      const result=await planner.prepare({sessionId:input.sessionId,anchor:view.currentAnchor,activeAnchors:view.activeAnchors,activePresentationAnchors,packet:clone(input.packet),presentationId:input.presentationId,factReceiptId:input.factReceiptId,story:clone(input.story),history,database,baseModel:baseFor(input,view),signal})
+      const result=await planner.prepare({sessionId:input.sessionId,anchor:view.currentAnchor,activeAnchors:view.activeAnchors,activePresentationAnchors,historyProjection,packet:clone(input.packet),presentationId:input.presentationId,factReceiptId:input.factReceiptId,story:clone(input.story),history,database,baseModel:baseFor(input,view),signal})
       notify(input.sessionId);return result
     }),
     authorize:(id,signal)=>run(signal,combined=>readOwner(id,combined)),

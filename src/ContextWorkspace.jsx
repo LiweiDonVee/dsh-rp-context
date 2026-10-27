@@ -43,6 +43,7 @@ function FrozenMaterial({client,sessionId,record,signal}){
     <details open><summary>已选条目与版本引用</summary><pre>{json(preparation?.database?.entryRefs??[])}</pre><pre>{json(materials?.entries??[])}</pre></details>
     <details><summary>已记录候选池</summary><p className="rpc-help">当次有界候选池，仅列已保存的检索元数据。</p><pre>{preparation&&Object.hasOwn(preparation,'candidates')?json(preparation.candidates):'未记录'}</pre></details>
     <details><summary>历史表示与来源</summary><pre>{json(materials?.history??[])}</pre></details>
+    <details><summary>当时的有效历史投影</summary><pre>{preparation?.historyProjection?json(preparation.historyProjection):'未记录'}</pre></details>
     <details><summary>写作指导与作者注</summary><pre>{materials?.guidance??'未记录'}</pre><pre>{json(preparation?.authorNote)}</pre></details>
     <details><summary>模块与编译输入</summary><pre>{json(result.compiled)}</pre></details>
     <details><summary>实际模型与用量记录</summary><pre>{json({preparation:preparation?.models,presentation:result.models})}</pre></details>
@@ -129,6 +130,7 @@ function Workspace({sessionId,visible,client}){
     <p className="rpc-scope">当前窗口用于中间 GM 选材与最终写作输入。DSH 主 Agent 的历史和日志仍然保留；原生与 ACP 的上下文压缩由宿主管理。</p>
     {stage&&<p role="status" className="rpc-status">{stage}</p>}{notice&&<p role="status" className="rpc-status">{notice}</p>}
     {error&&<p role="alert" className="rpc-error">{error}</p>}
+    {data?.historyError&&<p role="alert" className="rpc-error">有效历史暂不可用：{data.historyError.message}</p>}
     {(conflict||staleDraft)&&<div className="rpc-conflict"><p>{conflict?'上下文已变化，输入已保留。重新载入将放弃当前未保存的编辑。':'有未保存的编辑。后台更新不会改变草稿的起始版本。重新载入将放弃当前编辑。'}</p><button type="button" disabled={saving} onClick={()=>void loadRef.current?.(true)}>重新载入上下文</button></div>}
     {loading&&!data&&<p role="status">正在读取上下文…</p>}
     {settings&&<section className="rpc-panel" aria-label="上下文设置"><h2>本轮材料设置</h2><form onSubmit={event=>{event.preventDefault();void write('settings')}}>
@@ -145,15 +147,15 @@ function Workspace({sessionId,visible,client}){
         </form>
       </section>}
       <section className="rpc-panel" aria-label="正式叙事历史"><div className="rpc-section-head"><h2>正式叙事历史</h2><span>{data.history.length} 条</span></div><p className="rpc-help">选择材料表示只影响后续输入；原文保持不变。</p>
-        <form className="rpc-search" onSubmit={search}><label><span className="rpc-sr">搜索历史</span><input type="search" aria-label="搜索历史" value={query} placeholder="搜索当前故事的正式叙事" onChange={event=>setQuery(event.target.value)}/></label><button type="submit" disabled={searching||!query.trim()}>{searching?'搜索中…':'搜索历史'}</button></form>
+        <form className="rpc-search" onSubmit={search}><label><span className="rpc-sr">搜索历史</span><input type="search" aria-label="搜索历史" value={query} disabled={!!data.historyError} placeholder="搜索当前故事的正式叙事" onChange={event=>setQuery(event.target.value)}/></label><button type="submit" disabled={searching||!query.trim()||!!data.historyError}>{searching?'搜索中…':'搜索历史'}</button></form>
         {matches!==null&&<section className="rpc-results" aria-label="搜索结果"><h3>搜索结果</h3>{matches.length?matches.map(match=><div key={match.id}><button type="button" onClick={()=>setSelected(match.id)}>查看第 {match.turn} 轮 · {modes[match.mode]??'历史'}</button>{match.summary&&<p>{match.summary}</p>}<p className="rpc-source">{sourceLabel(match.source)}</p></div>):<p>没有匹配的正式叙事</p>}</section>}
-        {!data.history.length?<p className="rpc-empty">尚无已确认的叙事</p>:<div className="rpc-history-layout"><div className="rpc-history-list" role="list" aria-label="叙事回合">{data.history.map(item=><div role="listitem" key={item.id}><button className="rpc-history-item" type="button" aria-pressed={selected===item.id} onClick={()=>setSelected(item.id)}><span className="rpc-item-meta">第 {item.turn} 轮 <span className="rpc-badge">{modes[item.mode]}</span></span><strong>{item.action||'正式正文'}</strong><span className="rpc-preview">{summaryOf(item,data)||'未生成摘要'}</span><span className="rpc-source">{sourceLabel(item.source)}</span></button></div>)}</div>
+        {!data.history.length?<p className="rpc-empty">{data.historyError?'恢复有效历史服务后可继续查看与选材。':'尚无已确认的叙事'}</p>:<div className="rpc-history-layout"><div className="rpc-history-list" role="list" aria-label="叙事回合">{data.history.map(item=><div role="listitem" key={item.id}><button className="rpc-history-item" type="button" aria-pressed={selected===item.id} onClick={()=>setSelected(item.id)}><span className="rpc-item-meta">第 {item.turn} 轮 <span className="rpc-badge">{modes[item.mode]}</span></span><strong>{item.action||'正式正文'}</strong><span className="rpc-preview">{summaryOf(item,data)||'未生成摘要'}</span><span className="rpc-source">{sourceLabel(item.source)}</span></button></div>)}</div>
         {record&&draft&&<section className="rpc-inspector" aria-label="叙事材料详情"><h3>第 {record.turn} 轮的材料</h3><div className="rpc-material"><span className="rpc-badge">{modes[record.mode]}</span><p>{record.mode==='summary'?(summaryOf(record,data)||'未生成摘要'):record.mode==='index'?'仅保留轮数与来源引用，需要时可展开原文。':record.content}</p></div>
           <label>历史表示<select aria-label="历史表示" value={draft.mode} disabled={saving} onChange={event=>editRepresentation('mode',event.target.value)}>{Object.entries(modes).map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></label>
           <label>事实摘要<textarea aria-label="事实摘要" rows="5" value={draft.summary} disabled={saving||draft.mode!=='summary'} placeholder="只记录已确认的事实，不把提案当作已发生事件" onChange={event=>editRepresentation('summary',event.target.value)}/></label>
           <p className="rpc-help">选择事实摘要时需有实际内容。未决事项在下方单独列出。</p><button type="button" disabled={saving||!draft.dirty} onClick={()=>void write('representation')}>保存表示</button>
           {lifecycle.current&&<Original key={historyReference(record)} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
-          {lifecycle.current&&record.source?.presentationId&&<FrozenMaterial key={historyReference(record)} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
+          {lifecycle.current&&record.source?.presentationId&&<FrozenMaterial key={`material:${historyReference(record)}`} client={client} sessionId={sessionId} record={record} signal={lifecycle.current.signal}/>}
         </section>}</div>}
       </section>
       <section className="rpc-panel" aria-label="未决事项"><h2>未决事项</h2><p className="rpc-help">尚未确定的问题单独保留，不作为已经发生的事件。</p>{data.unresolved?.length?<ul>{data.unresolved.map((text,index)=><li key={index}>{text}</li>)}</ul>:<p className="rpc-empty">暂无未决事项</p>}</section>

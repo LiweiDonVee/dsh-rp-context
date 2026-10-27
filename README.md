@@ -6,10 +6,10 @@
 
 ## 安装与范围
 
-目标 DSH 0.2.1-rc.3，下载 Release 的 `dsh-rp-context-0.2.0.tgz` 后退出 DSH、安装并重启：
+Context 0.3.0 面向 DSH 0.2.1-rc.3。安装包为 `dsh-rp-context-0.3.0.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
 
 ```powershell
-dsh plugin --profile desktop add ./dsh-rp-context-0.2.0.tgz
+dsh plugin --profile desktop add ./dsh-rp-context-0.3.0.tgz
 ```
 
 Web 模式改为 web。打开顶部 **上下文** 或右侧 **主动上下文** 页签。插件独立构建，不需要 RP Studio 源码；正式准备流程由可选的 RP 最后一步调用。
@@ -28,7 +28,9 @@ Web 模式改为 web。打开顶部 **上下文** 或右侧 **主动上下文** 
 
 ## 数据库与最后一步
 
-可选 [RP Database 0.2](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。多来源引用按 sourceKey 与 entryId 区分，同名 ID 不合并；旧单库服务继续使用 legacy 适配。关键词／向量／重排先给候选，GM 之后可以：
+可选 [RP Database](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。当前事实／正文修订组合使用 **Database 0.3.0、LastStep 0.4.0、GM 0.2.0、Context 0.3.0**；可配 Loop 0.1.0、Studio 1.4.0 与 StoryKit 0.2.0。旧 Database 0.2／LastStep 0.3 基线与纯 legacy 故事仍按[兼容说明](docs/compatibility.md)运行，Context 也可独立安装，不把新 reader 强制施加到所有旧故事。
+
+多来源引用按 sourceKey 与 entryId 区分，同名 ID 不合并；旧单库服务继续使用 legacy 适配。关键词／向量／重排先给候选，GM 之后可以：
 
 1. 读取候选正文，主动搜索候选外的条目；
 2. 选择、排除和排序自动条目，必开与禁用仍由程序执行；
@@ -37,11 +39,13 @@ Web 模式改为 web。打开顶部 **上下文** 或右侧 **主动上下文** 
 
 GM 已登记的事实条目只能由事实阶段提交，材料准备阶段不能修改。原生面板可填写一次性的下次写作作者注：准备时固定，正式接受后使用，writer 失败时留给同次重试；保存新注不会改变旧快照。作者注只指导表达，不成为事实。
 
-可选 RP 最后一步 0.3 提供已采用正文与精确材料检查。采用正文后创建新的规范 revision ID，旧摘要和表示不会误用到新正文。面板只列当前分支的正式叙事；展开冻结材料可查看当时条目及版本、历史表示、编译输入和实际模型记录。
+legacy 路径可由 RP 最后一步 0.3 提供已采用正文与精确材料检查；新事实／正文修订使用 0.4 的有效历史。采用正文后创建新的规范 revision ID，旧摘要和表示不会误用到新正文。面板只列当前分支的正式叙事；展开冻结材料可查看当时条目及版本、历史表示、编译输入和实际模型记录。
+
+启用事实/正文修订的 LastStep 提供 `storyHistory` 时，选材与面板只使用当前事实版本选中的正式正文；新事实尚无正文时不沿用旧事实正文。旧正文仍是 canonical 接受审计，折叠不会返还其已消费作者注。正文重生使用原冻结材料，不领取后来保存的新注。原选中来源或事实组被替代/移除后，旧自动计划与未决事项不进入新准备；普通追加会保留仍精确匹配的摘要和计划，手动表示按仍选中的来源保留。设置与下次作者注保留。缺少新功能所需历史投影时明确报告 `EFFECTIVE_HISTORY_UNAVAILABLE`，独立配置与作者注操作仍可用。
 
 人物知情使用自由文本备注，由 GM 判断，不做 NPC ACL。数据库资料是参考数据，不能改变模型协议、人类权限或已经确定的行动结果。
 
-[RP 最后一步 0.3](https://github.com/LiweiDonVee/dsh-rp-last-step) 在文风模块组装之前调用这个准备阶段，再将冻结的条目内容、版本引用、历史表示、最近正文和指导交给 writer。writer 没有数据库写工具。数据库修改是自己的事务，正文失败不意味着重新执行事实工具。
+[RP 最后一步](https://github.com/LiweiDonVee/dsh-rp-last-step) 在首次文风模块组装之前调用这个准备阶段，再将冻结的条目内容、版本引用、历史表示、最近正文和指导交给 writer。writer 没有数据库写工具。数据库修改是自己的事务，正文失败不意味着重新执行事实工具。0.4 的正文重生复用已冻结材料，不重新调用 Context；原生 owner 调度中的主模型请求与 writer 分别计数。
 
 可选 Loop Studio 为 **RP 上下文与数据库选材**、**RP 历史摘要** 分别配置实际模型。无节点覆盖时继承本次调用的模型，切换路由不会带入另一模型的推理强度。
 
@@ -54,6 +58,10 @@ GM 已登记的事实条目只能由事实阶段提交，材料准备阶段不�
 ## 服务、存储与开发
 
 Agent 可使用 `rp_context_status/read/search/fold` 检查和调整当前有效叙事。可选服务 `ctx.get('rpContext').prepare({sessionId,agent,packet,baseModel,signal,presentationId?,factReceiptId?,story?})` 返回冻结材料；关闭时返回 null，调用方保持原行为。新呈现传入 presentationId 才会 claim 作者注，旧调用继续独立使用。事实回执和故事快照是单独参数，不扩展 packet 白名单。
+
+准备结果可选 `historyProjection={schemaVersion:1,projectionKey,selectedPresentationIds,activeFactReceiptIds}` 来自该次捕获的 `storyHistory` 响应。它只证明选材/缓存依据，不授予事实或作者注接受权限。材料检查显示保存值；旧 receipt 缺字段显示“未记录”。
+
+`state` 在有效历史缺失时返回明确 `historyError` 与真实设置、作者注和 revision，面板保留配置/注编辑；此时空 history 表示当前选材不可用。需要新投影的故事由真实 canonical 版本元数据与 Database 本故事 `factReviewProjection` 识别，单有全局 capability 不阻止纯 legacy 故事。
 
 owner 服务 `setAuthorNote/authorNote/material` 管理作者注与快照。`presentationOutcome` 仅供插件在规范接受或失败后通知；成功消费还会核验真实叙事与 Last Step 冻结的 claim。`exportState/preflightRestore/restoreState/contentRevision` 为故事存档提供 Context 状态片段；恢复要求宿主先导入并验证原身份日志，再校验真实来源，拒绝已有会话冲突，不重造历史或携带提供方凭据。完整故事存档由 Story Kit 协调。
 

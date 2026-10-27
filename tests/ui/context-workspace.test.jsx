@@ -220,3 +220,23 @@ it('reads exact frozen material for active presentations and discards late respo
   expect(material).toHaveTextContent('冻结的条目正文');expect(material).toHaveTextContent('冻结的模块');expect(material).toHaveTextContent('123');expect(material).toHaveTextContent('alpha')
   expect(material).not.toHaveTextContent('思考过程')
 })
+
+it.each([true,false])('shows the captured history projection or explicitly marks an older receipt unrecorded (%s)',async recorded=>{
+  const active={...record,source:{...record.source,presentationId:'presentation',baseResultSeq:3}},api=client(state({history:[active]}))
+  api.material=vi.fn().mockResolvedValue({presentationId:'presentation',contextPreparation:{...(recorded?{historyProjection:{schemaVersion:1,projectionKey:'captured-basis-only',selectedPresentationIds:['old-selected'],activeFactReceiptIds:['old-fact-receipt']}}:{}),materials:{history:[],entries:[],guidance:'',chars:0}}})
+  render(<ContextWorkspace sessionId="story" visible client={api}/>);await screen.findByText('走到桥边');fireEvent.click(screen.getByRole('button',{name:'查看冻结材料'}))
+  const material=await screen.findByRole('region',{name:'冻结写作材料'}),projection=within(material).getByText('当时的有效历史投影').parentElement
+  expect(projection).toHaveTextContent(recorded?'captured-basis-only':'未记录')
+  if(recorded){expect(projection).toHaveTextContent('old-selected');expect(projection).toHaveTextContent('old-fact-receipt')}
+})
+
+it('shows unavailable effective history while keeping settings and pending owner note controls usable',async()=>{
+  const api=client(state({history:[],historyError:{code:'EFFECTIVE_HISTORY_UNAVAILABLE',message:'Required effective reader is unavailable'},authorNote:{id:'note',text:'Pending owner note',version:1,status:'pending'}}))
+  api.setAuthorNote=vi.fn().mockResolvedValue({revision:5})
+  render(<ContextWorkspace sessionId="story" visible client={api}/>);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Required effective reader is unavailable')
+  expect(screen.queryByText('尚无已确认的叙事')).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'搜索历史'})).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('保留完整正文轮数'),{target:{value:'7'}});fireEvent.click(screen.getByRole('button',{name:'保存设置'}));await waitFor(()=>expect(api.configure).toHaveBeenCalled())
+  const note=screen.getByLabelText('下次写作作者注');expect(note).toHaveValue('Pending owner note');fireEvent.change(note,{target:{value:''}});fireEvent.click(screen.getByRole('button',{name:'保存作者注'}))
+  await waitFor(()=>expect(api.setAuthorNote).toHaveBeenCalled());expect(api.setAuthorNote.mock.calls[0][1]).toBe('')
+})

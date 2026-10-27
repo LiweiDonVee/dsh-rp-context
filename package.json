@@ -1,6 +1,6 @@
 {
   "name": "dsh-rp-context",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH RP 主动上下文管理与材料准备",
   "license": "MIT",
   "type": "module",

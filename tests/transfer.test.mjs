@@ -215,7 +215,7 @@ test('unloading optional LastStep preserves validated consumption and leaves own
   assert.equal((await destination.service.authorNote({ sessionId: 'story' })).status, 'consumed');
   const unrelated = await destination.store.capturePreparation('story', { presentationId: 'unrelated', anchor: 'anchor', activeAnchors: ['anchor'], activePresentationAnchors: ['anchor'] });
   assert.equal(unrelated.authorNote, null);
-  destination.ctx.get = name => name === 'rpLastStep' ? { narratives: async () => { throw Error('Optional narrative service unavailable'); }, material: async () => { materialReads++;throw Error('Old proof must not be requested'); } } : undefined;
+  destination.ctx.get = name => name === 'rpLastStep' ? { narratives: async () => { throw Object.assign(Error('Optional narrative service unavailable'), { code: 'EFFECTIVE_HISTORY_UNAVAILABLE' }); }, material: async () => { materialReads++;throw Error('Old proof must not be requested'); } } : undefined;
   assert.equal((await destination.service.state({ sessionId: 'story' })).authorNote.status, 'consumed');
   destination.ctx.get = () => undefined;
   destination.sessions.set('story', [...events(), { seq: 4, type: 'user/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { id: 'result-only-rewind', source: { kind: 'runtime-context' }, content: [] } }]);

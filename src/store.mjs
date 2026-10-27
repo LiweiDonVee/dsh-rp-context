@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ContextError, validateSettings } from './core.mjs';
 import { transferSessionIds, validateRestoreEnvelope, validateTransferState, transferFingerprint } from './transfer.mjs';
+import { validateHistoryProjection, validateHistoryRefs } from './history-projection.mjs';
 
 const queues = new Map();
 const fail = (code, message, status) => { throw new ContextError(code, message, status); };
@@ -42,7 +44,10 @@ function projectAuthorNote(session, active, presentations) {
 function project(session, activeAnchors, activePresentationAnchors) {
   const active = anchors(activeAnchors);
   const selected = session.plans.filter(plan => active === undefined || active.has(plan.anchor)).at(-1) ?? session.baseline;
-  return { settings: session.settings, representations: selected.representations, unresolved: selected.unresolved, summaries: session.summaries, authorNote: projectAuthorNote(session, active, anchors(activePresentationAnchors)) };
+  return { settings: session.settings, representations: selected.representations, unresolved: selected.unresolved, summaries: session.summaries,
+    ...(selected.historyProjection ? { historyProjection: selected.historyProjection } : {}), ...(session.summaryProjectionKeys ? { summaryProjectionKeys: session.summaryProjectionKeys } : {}),
+    ...(selected.historyRefs ? { historyRefs: selected.historyRefs } : {}), ...(selected.ownerRepresentationIds ? { ownerRepresentationIds: selected.ownerRepresentationIds } : {}), ...(session.summaryRefs ? { summaryRefs: session.summaryRefs } : {}),
+    authorNote: projectAuthorNote(session, active, anchors(activePresentationAnchors)) };
 }
 
 export async function createContextStore({ directory }) {
@@ -222,11 +227,14 @@ export async function createContextStore({ directory }) {
         return structuredClone({ revision: state.revision, note: record.authorNote ?? null });
       });
     },
-    savePlan(sessionId, { representations, unresolved, expectedRevision, anchor, beforeCommit } = {}) {
+    savePlan(sessionId, { representations, unresolved, historyProjection, historyRefs, ownerRepresentationIds, expectedRevision, anchor, beforeCommit } = {}) {
       return mutate(expectedRevision, async state => {
         identifier(anchor);
         const record = session(state, sessionId);
-        record.plans.push({ anchor, representations: representationMap(representations), unresolved: questions(unresolved) });
+        const selected = representationMap(representations);
+        if (ownerRepresentationIds !== undefined && (!Array.isArray(ownerRepresentationIds) || new Set(ownerRepresentationIds).size !== ownerRepresentationIds.length || ownerRepresentationIds.some(id => typeof id !== 'string' || !Object.hasOwn(selected, id)))) fail('INVALID_PLAN', 'Owner representation IDs require exact selected representations');
+        record.plans.push({ anchor, representations: selected, unresolved: questions(unresolved), ...(historyProjection === undefined ? {} : { historyProjection: validateHistoryProjection(historyProjection) }),
+          ...(historyRefs === undefined ? {} : { historyRefs: validateHistoryRefs(historyRefs) }), ...(ownerRepresentationIds === undefined ? {} : { ownerRepresentationIds: [...ownerRepresentationIds] }) });
         // Keep the context revision reserved while the optional independent DB
         // transaction commits. The callback must not call this store recursively.
         if (beforeCommit !== undefined) {
@@ -236,32 +244,48 @@ export async function createContextStore({ directory }) {
         return project(record);
       });
     },
-    cacheSummaries(sessionId, { summaries, expectedRevision } = {}) {
+    cacheSummaries(sessionId, { summaries, historyProjection, historyRefs, expectedRevision } = {}) {
       return mutate(expectedRevision, state => {
         if (!Array.isArray(summaries)) fail('INVALID_SUMMARY', 'Summaries must be an array');
         const record = session(state, sessionId);
+        const basis = historyProjection === undefined ? undefined : validateHistoryProjection(historyProjection);
+        const sources = new Map((historyRefs === undefined ? [] : validateHistoryRefs(historyRefs)).map(ref => [JSON.stringify([ref.presentationId, ref.resultSeq]), ref]));
         const ids = new Set();
         for (const item of summaries) {
           if (!object(item) || typeof item.id !== 'string' || !item.id.trim() || typeof item.summary !== 'string' || !item.summary.trim() || ids.has(item.id)) fail('INVALID_SUMMARY', 'Summaries require distinct canonical IDs and actual text');
           ids.add(item.id);
           Object.defineProperty(record.summaries, item.id, { value: item.summary, writable: true, enumerable: true, configurable: true });
+          if (basis) Object.defineProperty(record.summaryProjectionKeys ??= {}, item.id, { value: basis.projectionKey, writable: true, enumerable: true, configurable: true });
+          else if (record.summaryProjectionKeys) delete record.summaryProjectionKeys[item.id];
+          if (sources.has(item.id)) Object.defineProperty(record.summaryRefs ??= {}, item.id, { value: structuredClone(sources.get(item.id)), writable: true, enumerable: true, configurable: true });
+          else if (record.summaryRefs) delete record.summaryRefs[item.id];
         }
         return project(record);
       });
     },
-    forkSession(fromId, toId, { activeAnchors, activePresentationAnchors, expectedRevision } = {}) {
+    forkSession(fromId, toId, { activeAnchors, activePresentationAnchors, inheritedHistoryRefs = [], expectedRevision } = {}) {
       return mutate(expectedRevision, state => {
         const target = key(toId);
         if (fromId === toId || Object.hasOwn(state.sessions, target)) fail('SESSION_EXISTS', 'Fork requires an independent new child session', 409);
         const parent = state.sessions[key(fromId)] ?? fresh();
         const active = anchors(activeAnchors);
+        const inherited = new Map(validateHistoryRefs(inheritedHistoryRefs).filter(ref => ref.sessionId === toId && (active === undefined || active.has(ref.assistantMessageId))).map(ref => [JSON.stringify([ref.presentationId, ref.resultSeq]), ref]));
+        const childRef = ref => {
+          const actual = inherited.get(JSON.stringify([ref.presentationId, ref.resultSeq]));
+          // Only the authenticated child's real canonical prefix can rebind a
+          // copied parent ref. Preserve its owner schema and every other field.
+          return ref.sessionId === fromId && actual && Object.entries(ref).every(([field, value]) => field === 'sessionId' || isDeepStrictEqual(value, actual[field])) ? { ...ref, sessionId: toId } : ref;
+        };
         const child = fresh();
         child.settings = structuredClone(parent.settings);
         // Preserve causal anchors across forks so a child can rewind further
         // into the inherited prefix instead of reviving a flattened plan.
         child.baseline = structuredClone(parent.baseline);
         child.plans = structuredClone(parent.plans.filter(plan => active === undefined || active.has(plan.anchor)));
+        for (const plan of child.plans) if (plan.historyRefs) plan.historyRefs = plan.historyRefs.map(childRef);
         child.summaries = structuredClone(parent.summaries);
+        if (parent.summaryProjectionKeys) child.summaryProjectionKeys = structuredClone(parent.summaryProjectionKeys);
+        if (parent.summaryRefs) child.summaryRefs = Object.fromEntries(Object.entries(structuredClone(parent.summaryRefs)).map(([id, ref]) => [id, childRef(ref)]));
         const pending = projectAuthorNote(parent, active, anchors(activePresentationAnchors));
         if (pending?.status === 'pending') {
           child.authorNote = { id: randomUUID(), text: pending.text, version: 1, status: 'pending' };

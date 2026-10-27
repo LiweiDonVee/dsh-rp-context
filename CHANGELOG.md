@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.3.0 — 2026-10-26
+
+- 材料和可见历史优先使用 LastStep `storyHistory` 的当前有效正文，排除被替代正文、摘要和自动未决计划；新事实未写成正文时不混入旧事实正文。
+- canonical 作者注接受与恢复证明独立保留；折叠旧正文不重新投递已消费注，新 pending 注不被旧冻结正文重生领取。
+- 按规范 NarrativeRef 与 projectionKey 约束缓存和计划；普通追加保留精确摘要和计划，替代后清自动 carry，手动表示按仍有效的来源保留。prepare 保存实际捕获的 `historyProjection`，材料面板显示冻结依据与旧版未记录状态。
+- 本故事真实 Database 投影识别尚未写成正文的新事实；缺有效历史时面板明确错误，保留设置与作者注编辑。
+- transfer 支持可选投影 basis 元数据，保留旧状态读取、严格 note proof 和 export 无嵌套 maintenance。
+
 ## 0.2.0 — 2026-10-25
 
 - Database v2 多来源选材和版本引用，保留独立及 legacy 单库路径，材料阶段不能修改 GM 事实。

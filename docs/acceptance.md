@@ -1,5 +1,37 @@
 # Context 验收记录
 
+## 当前 0.3.0 组合原生证据 — 2026-10-27
+
+官方 DSH 0.2.1-rc.3 隔离 home 的 V6 七包运行中，审批／两层重生五组实际功能断言 **5/5 通过**，包括修订事实后的有效材料、当前事实驱动下一轮、冻结 writer 不重跑 Context、作者注时序及不同 home 冷恢复。旧九场景及同次默认依赖回读、Story Kit 旧十三阶段的结果分别归属各次运行，组件数量不相加为全栈测试数。
+
+V6 manifest SHA256 为 `79aa41cb6b3602b3fa2a02cf27cdd6b0bd3b72f34c7ba6a2b078a620b765aeeb`，本次受测 Context 0.3.0 archive 为 `02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。来源、实际计数和限制见 [Studio 当前原生证据](https://github.com/LiweiDonVee/dsh-rp-studio/blob/main/docs/native-acceptance.md#v6-approval-and-regeneration)。五组 raw 保留 `checkpoint-passed`／`finalAcceptance:false`；发行包与最终 CI 另校验，下载包按同一 Release 的 SHA256SUMS 核对。
+
+## 0.3.0 源码审查状态（V6 之前）— 2026-10-27
+
+产品源码 `28f254409fbe21ab2d348f6de358d28e2d913305` 已通过 fix2 scoped spec／quality 复核，先前 I1、I2 与 catch 范围 F1 已关闭。当前冻结包 SHA256 为 `02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`，对应本次 Markdown 更新前的产品包。作者记录的最终组件检查为 92 host +22 UI、lint/build/package 通过；本次只更新文档，没有重跑检查。
+
+组件 fixture 与上节后续 V6 组合原生运行分开记录。当前新组合与可选 legacy 路径见[兼容说明](compatibility.md)。下面保留各阶段实际记录的包哈希、数量和边界。
+
+## 0.3.0 Context-A/B — 有效材料与 canonical note proof checkpoint
+
+2026-10-26，按事实审批/两层重新生成冻结契约 C1、C7 实施。既有 68 host +19 UI clean 基线直接复用，没有重跑。新增 14 项内核和 3 项 UI 回归，focused RED→GREEN 后最终 `pnpm check` 通过 **82 host +22 UI =104**，lint/build 通过。`pnpm package` exit 0，包 SHA256：`a2c902961a274b6f8ad5883121005d80e9b4a80314d36358f66542abeb72329c`。打包脚本保留既有 Node DEP0190 非失败提示。
+
+用真实 canonical parser 和契约形状的 LastStep/Database fixtures 核验：修订事实后的选材排除旧正文/摘要/自动未决项；新事实未写作时不沿用旧正文；普通追加保留 exact-ref 摘要和计划；手动表示按仍有效来源保留。折叠不释放已消费注，真实移除原接受结果仍回 pending，新 pending 注不被旧冻结材料的正文接受消费。prepare 冻结当时响应的 C1 `historyProjection`，材料面板显示保存依据或旧 receipt“未记录”。缺有效 reader 时 state 明确 `historyError`，owner 设置与注控件继续可用；真实本故事 DB captured group 可识别尚无正文的新事实，未接受的 metadata 不阻断 legacy 路径。
+
+transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要求原 canonical finishing result + LastStep 冻结 claim；有效投影不能制造证明。原 restore preflight、journal、strict proof、causal fork 和 R24 export 无嵌套 maintenance 测试保持通过。
+
+此 checkpoint 记录当时的内核/UI 与可安装包证据；后续三 owner 真实原生组合见本页顶部 V6 记录。typed fixtures 与原生接受、真实工具零重放的证据分别归属。
+
+### 审查 fix1 — verified fork refs / owner source error boundary
+
+独立审查 I1/I2 的 focused RED 分别为 fork 2 fail/1 preservation pass、reader exception 4 fail/1 preservation pass。修复只将已核对真实 child canonical prefix 的 copied parent refs 重新绑定 child sessionId；core 仍逐字段严格比较，首次 child prepare 保存实际 child projectionKey，真实替代/移除仍丢自动 carry。未知 owner reader 异常原样抛回，只有缺方法或明确 `EFFECTIVE_HISTORY_UNAVAILABLE` 才使用相应兼容路径。原卸载 note fixture 改为显式缺依赖码。
+
+focused effective/store/transfer **44/44**，本轮唯一完整 `pnpm check` **90 host +22 UI =112 PASS**，lint/build 通过。`pnpm package` exit 0，新 0.3.0 包 SHA256：`e39c4c0555edbb8ac01e66747670374638cfb53ff4c8ff0acf048a5508dd1cd6`；替代上一个 checkpoint 包，既有 DEP0190 提示保持。无 SDK/native probe 或付费模型调用。后续 scoped review 的遗留 F1 由下节 fix2 关闭。
+
+### 审查 fix2 — canonical DTO 校验在 owner catch 外
+
+fix1 scoped review 的唯一 F1 先以 `{records:null}` 重现 1 fail/1 显式缺依赖 preservation pass。只把 canonical DTO 映射/校验移到 owner await 的兼容 catch 外，保留明确 owner 缺依赖 fallback 和原异常透传；不改 C14、fork、core exact、prior key 或 validator。8 项定点用例 GREEN，本轮唯一完整 `pnpm check` **92 host +22 UI =114 PASS**，lint/build/package 通过。当前 0.3.0 包 SHA256：`02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。未运行 native/兄弟仓库；固定修复差异的 scoped spec／quality 复核已通过。
+
 ## 同 Snapshot 冷态 preflight 修复 — T9
 
 七包 rev3 在所有 owner 已恢复、尚未激活的 pending 状态重启后，Context preflight 把任何已有 Session row 直接判为冲突。仅修改 preflight：严格验证并比较完整规范化 row，相同状态支持，设置、注、计划、缓存的真实差异仍拒绝。restoreState 的新 job 冲突、journal 身份、严格 proof 与同任务无覆写路径保持。
