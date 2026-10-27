@@ -1,10 +1,16 @@
 # Context 验收记录
 
-## 当前 0.3.0 源码审查状态 — 2026-10-27
+## 当前 0.3.0 组合原生证据 — 2026-10-27
+
+官方 DSH 0.2.1-rc.3 隔离 home 的 V6 七包运行中，审批／两层重生五组实际功能断言 **5/5 通过**，包括修订事实后的有效材料、当前事实驱动下一轮、冻结 writer 不重跑 Context、作者注时序及不同 home 冷恢复。旧九场景及同次默认依赖回读、Story Kit 旧十三阶段的结果分别归属各次运行，组件数量不相加为全栈测试数。
+
+V6 manifest SHA256 为 `79aa41cb6b3602b3fa2a02cf27cdd6b0bd3b72f34c7ba6a2b078a620b765aeeb`，本次受测 Context 0.3.0 archive 为 `02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`。来源、实际计数和限制见 [Studio 当前原生证据](https://github.com/LiweiDonVee/dsh-rp-studio/blob/main/docs/native-acceptance.md#v6-approval-and-regeneration)。五组 raw 保留 `checkpoint-passed`／`finalAcceptance:false`；发行包与最终 CI 另校验，下载包按同一 Release 的 SHA256SUMS 核对。
+
+## 0.3.0 源码审查状态（V6 之前）— 2026-10-27
 
 产品源码 `28f254409fbe21ab2d348f6de358d28e2d913305` 已通过 fix2 scoped spec／quality 复核，先前 I1、I2 与 catch 范围 F1 已关闭。当前冻结包 SHA256 为 `02639877cacb551f52c48f9d69acca20dcbb1eb56ab520fd3a16ff960645a446`，对应本次 Markdown 更新前的产品包。作者记录的最终组件检查为 92 host +22 UI、lint/build/package 通过；本次只更新文档，没有重跑检查。
 
-新事实审批／两层重生的组合 native 验收尚未完成，组件 fixture 与历史原生结果不能代替它。当前新组合与可选 legacy 路径见[兼容说明](compatibility.md)。下面保留各阶段实际记录的包哈希、数量和边界。
+组件 fixture 与上节后续 V6 组合原生运行分开记录。当前新组合与可选 legacy 路径见[兼容说明](compatibility.md)。下面保留各阶段实际记录的包哈希、数量和边界。
 
 ## 0.3.0 Context-A/B — 有效材料与 canonical note proof checkpoint
 
@@ -14,7 +20,7 @@
 
 transfer 的 optional basis/cache metadata 可往返，已消费注恢复仍要求原 canonical finishing result + LastStep 冻结 claim；有效投影不能制造证明。原 restore preflight、journal、strict proof、causal fork 和 R24 export 无嵌套 maintenance 测试保持通过。
 
-此 checkpoint 是内核/UI 与可安装包证据，尚未运行新 GM/Database/LastStep 三 owner 的真实原生组合。该联测由协调者在独立 spec/quality 审查后安排；不以 typed fixtures 冒充原生接受或真实工具零重放证明。
+此 checkpoint 记录当时的内核/UI 与可安装包证据；后续三 owner 真实原生组合见本页顶部 V6 记录。typed fixtures 与原生接受、真实工具零重放的证据分别归属。
 
 ### 审查 fix1 — verified fork refs / owner source error boundary
 

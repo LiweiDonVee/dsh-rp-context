@@ -14,6 +14,6 @@
 
 独立原生 fixture 与真实多插件组合验收分开记录。本地确定性模型验证程序、来源和请求边界，不代表付费模型叙事质量。新版原生证据见验收记录。
 
-截至 2026-10-27，上述新组合的源码审查已通过，新增审批／两层重生实际组合 native 验收仍未完成。Database／LastStep 仍为可选依赖：有 storyHistory 时使用实际有效响应；缺方法时仅对该故事已有 canonical 版本元数据或真实 captured projection 要求新 reader，纯 legacy 日志／真实空投影允许旧读取。全局 capability 存在本身不能把旧故事升级为新依赖，授权／来源错误也不能转为空 legacy 历史。
+截至 2026-10-27，上述新组合的源码审查已通过，V6 实际包的审批／两层重生五组功能断言全部通过，受测身份和发行验证边界见[验收记录](acceptance.md)。Database／LastStep 仍为可选依赖：有 storyHistory 时使用实际有效响应；缺方法时仅对该故事已有 canonical 版本元数据或真实 captured projection 要求新 reader，纯 legacy 日志／真实空投影允许旧读取。全局 capability 存在本身不能把旧故事升级为新依赖，授权／来源错误也不能转为空 legacy 历史。
 
 旧 receipt 没有 `contextPreparation.historyProjection` 时仍可检查材料，并显示投影“未记录”。旧 Context 存档无需投影字段；新存档的 optional basis 由 0.3 严格验证，旧 owner 不会静默丢弃未知状态。有效投影不可用只阻止依赖选材的操作，独立 owner configure、作者注替换/清空及已验证 canonical 消费状态仍可用。

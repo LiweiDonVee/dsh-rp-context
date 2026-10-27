@@ -6,7 +6,7 @@
 
 ## 安装与范围
 
-当前 0.3.0 目标为 DSH 0.2.1-rc.3。截至 2026-10-27 使用本地构建／待发布的 `dsh-rp-context-0.3.0.tgz`；[Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases) 以实际列出的版本为准。退出 DSH、安装并重启：
+Context 0.3.0 面向 DSH 0.2.1-rc.3。安装包为 `dsh-rp-context-0.3.0.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
 
 ```powershell
 dsh plugin --profile desktop add ./dsh-rp-context-0.3.0.tgz
