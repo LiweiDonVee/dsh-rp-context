@@ -139,7 +139,7 @@ it('uses session-scoped EventSource metadata and closes its connection',()=>{
 
 it('registers native context entry points and removes injected styles on disposal',async()=>{
   const native=await import('../../src/client.jsx'),disposers=[],registrations=[]
-  const ctx={effect:fn=>{const dispose=fn();if(typeof dispose==='function')disposers.push(dispose)},sidebarRightTabs:{register:vi.fn(()=>vi.fn())},sidebarRight:{openTab:vi.fn()},slots:{inject:vi.fn((_name,fn)=>fn()),register:vi.fn((options,component)=>{registrations.push({options,component});return vi.fn()})}}
+  const ctx={effect:fn=>{const dispose=fn();if(typeof dispose==='function')disposers.push(dispose)},sidebarRightTabs:{register:vi.fn(()=>vi.fn()),get:vi.fn(),subscribe:vi.fn(()=>vi.fn())},sidebarRight:{openTab:vi.fn()},slots:{inject:vi.fn((_name,fn)=>fn()),register:vi.fn((options,component)=>{registrations.push({options,component});return vi.fn()})}}
   native.apply(ctx)
   expect(native.inject).toEqual(['slots','sidebarRight','sidebarRightTabs']);expect(ctx.sidebarRightTabs.register.mock.calls[0][0]).toMatchObject({id:'dsh-rp-context/workspace',kind:'rp-context'})
   expect(document.querySelector('style[data-rp-context]')).toBeInTheDocument()

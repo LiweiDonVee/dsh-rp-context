@@ -2,17 +2,19 @@
 
 独立的主动上下文与 GM 选材插件。保留原始叙事，让模型按本轮需要选择完整正文、事实摘要或索引，并为最终写作准备数据库条目与历史材料。
 
+**0.3.1 界面更新：** 安装 RP Studio 1.5.0 后，从 **RP ▾ → 上下文** 打开完整原生页面；会话顶部与空白页的重复入口自动收纳。未安装或卸载 Studio 时恢复独立入口，右侧原生页签始终保留。管理界面的字体和字号随宿主设置变化。
+
 ![DSH 原生工作区](docs/images/workspace.png)
 
 ## 安装与范围
 
-Context 0.3.0 面向 DSH 0.2.1-rc.3。安装包为 `dsh-rp-context-0.3.0.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
+Context 0.3.1 面向 DSH 0.2.1-rc.3。安装包为 `dsh-rp-context-0.3.1.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
 
 ```powershell
-dsh plugin --profile desktop add ./dsh-rp-context-0.3.0.tgz
+dsh plugin --profile desktop add ./dsh-rp-context-0.3.1.tgz
 ```
 
-Web 模式改为 web。打开顶部 **上下文** 或右侧 **主动上下文** 页签。插件独立构建，不需要 RP Studio 源码；正式准备流程由可选的 RP 最后一步调用。
+Web 模式改为 web。安装 RP Studio 1.5.0 时从 **RP ▾ → 上下文** 打开；单独安装时使用顶部 **上下文**，也可打开右侧 **主动上下文** 页签。插件独立构建，不需要 RP Studio 源码；正式准备流程由可选的 RP 最后一步调用。
 
 本版窗口作用于 **中间 GM 与最终正文模型** 的独立输入。DSH 主 Agent 的会话日志与请求保持宿主原有管理，插件不篡改已冻结请求，不替换压缩后端。需要主循环全局压缩时使用经过对应版本验证的 DSH／ACP 接口。
 
@@ -28,7 +30,7 @@ Web 模式改为 web。打开顶部 **上下文** 或右侧 **主动上下文** 
 
 ## 数据库与最后一步
 
-可选 [RP Database](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。当前事实／正文修订组合使用 **Database 0.3.0、LastStep 0.4.0、GM 0.2.0、Context 0.3.0**；可配 Loop 0.1.0、Studio 1.4.0 与 StoryKit 0.2.0。旧 Database 0.2／LastStep 0.3 基线与纯 legacy 故事仍按[兼容说明](docs/compatibility.md)运行，Context 也可独立安装，不把新 reader 强制施加到所有旧故事。
+可选 [RP Database](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。当前事实／正文修订组合使用 **Database 0.3.1、LastStep 0.4.1、GM 0.2.1、Context 0.3.1**；可配 Loop 0.1.1、Studio 1.5.0 与 StoryKit 0.2.1。旧 Database 0.2／LastStep 0.3 基线与纯 legacy 故事仍按[兼容说明](docs/compatibility.md)运行，Context 也可独立安装，不把新 reader 强制施加到所有旧故事。
 
 多来源引用按 sourceKey 与 entryId 区分，同名 ID 不合并；旧单库服务继续使用 legacy 适配。关键词／向量／重排先给候选，GM 之后可以：
 
