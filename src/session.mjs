@@ -1,4 +1,5 @@
 import {ContextError} from './core.mjs'
+import {withSessionLineage} from './lineage.mjs'
 import {isDeepStrictEqual} from 'node:util'
 
 const text=message=>(message?.content??[]).filter(block=>block.type==='text').map(block=>block.text).join('\n')
@@ -47,7 +48,7 @@ export function createOwnerReader(ctx) {
         if(!Array.isArray(page?.records)||typeof page.hasMore!=='boolean')throw new ContextError('HISTORY_INVALID','Session history is unavailable',503)
         records.push(...page.records)
       }
-      return projectSession({...snapshot,records})
+      const view=projectSession({...snapshot,records});return withSessionLineage(ctx,view,signal)
     }catch(error){
       if(combined.aborted)combined.throwIfAborted()
       if(error instanceof ContextError)throw error

@@ -8,6 +8,7 @@ import {projectSession,createOwnerReader,narrativeHistory} from './session.mjs'
 import {createContextRoutes} from './routes.mjs'
 import {transferSessionIds,validateTransferState,canonicalContextState} from './transfer.mjs'
 import {captureStoryHistory,ownerNarratives,hasNarrativeRevisions,effectiveHistoryUnavailable} from './history-projection.mjs'
+import {withSessionLineage} from './lineage.mjs'
 
 export const name='rp-context'
 export const inject=['connection','typertGateway','agents','llm']
@@ -30,7 +31,7 @@ export async function createContextHost(ctx,options={}){
   async function viewFor(input,signal){
     if(input.agent){
       if(input.agent.session.id!==input.sessionId||ctx.agents.get(input.sessionId)!==input.agent)throw new ContextError('AGENT_MISMATCH','The caller does not own this story',403)
-      return projectSession({header:input.agent.session.header??{id:input.sessionId},records:input.agent.session.snapshotEvents()})
+      return withSessionLineage(ctx,projectSession({header:input.agent.session.header??{id:input.sessionId},records:input.agent.session.snapshotEvents()}),signal)
     }
     return readOwner(input.sessionId,signal)
   }
@@ -158,6 +159,7 @@ export async function createContextHost(ctx,options={}){
     for(const[claimId,claim]of Object.entries(state.noteClaims??{}))if(claim.status==='consumed'){const evidence=await noteEvidence(view,claimId,claim,signal,true);claim.outcomePresentationId=evidence.presentationId}
   }
   const service={
+    capabilities:Object.freeze({sessionLineage:1}),
     contentRevision:(input={})=>run(input.signal,()=>store.contentRevision()),
     exportState:input=>run(input.signal,async signal=>{
       const ids=transferSessionIds(input.sessionIds),live=exportIdleSessions(ids)
@@ -177,7 +179,7 @@ export async function createContextHost(ctx,options={}){
       const result=await store.restoreState({...input,signal,validateSources:(state,ids)=>idleSessions(ids,async()=>{
         for(const item of state.payload.sessions){
           let view
-          try{view=await readOwner(item.sessionId,signal)}catch(error){if(signal.aborted)throw error;throw new ContextError('RESTORE_REQUIREMENT_MISSING','Import and validate the exact canonical session before restoring Context',409)}
+          try{view=await withSessionLineage(ctx,await readOwner(item.sessionId,signal),signal,input.lineages)}catch(error){if(signal.aborted||error.code==='INVALID_ANCESTRY')throw error;throw new ContextError('RESTORE_REQUIREMENT_MISSING','Import and validate the exact canonical session before restoring Context',409)}
           canonicalContextState(item.state,view)
           await restoredNoteEvidence(item.state,view,signal)
         }
