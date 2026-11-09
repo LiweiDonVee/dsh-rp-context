@@ -8,10 +8,10 @@
 
 ## 安装与范围
 
-Context 0.3.1 面向 DSH 0.2.1-rc.3。安装包为 `dsh-rp-context-0.3.1.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
+Context 0.3.2 面向 DSH 0.2.2-rc.1。安装包为 `dsh-rp-context-0.3.2.tgz`，下载入口为 [Releases](https://github.com/LiweiDonVee/dsh-rp-context/releases)。退出 DSH、安装并重启：
 
 ```powershell
-dsh plugin --profile desktop add ./dsh-rp-context-0.3.1.tgz
+dsh plugin --profile desktop add ./dsh-rp-context-0.3.2.tgz
 ```
 
 Web 模式改为 web。安装 RP Studio 1.5.0 时从 **RP ▾ → 上下文** 打开；单独安装时使用顶部 **上下文**，也可打开右侧 **主动上下文** 页签。插件独立构建，不需要 RP Studio 源码；正式准备流程由可选的 RP 最后一步调用。
@@ -30,7 +30,7 @@ Web 模式改为 web。安装 RP Studio 1.5.0 时从 **RP ▾ → 上下文** �
 
 ## 数据库与最后一步
 
-可选 [RP Database](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。当前事实／正文修订组合使用 **Database 0.3.1、LastStep 0.4.1、GM 0.2.1、Context 0.3.1**；可配 Loop 0.1.1、Studio 1.5.0 与 StoryKit 0.2.1。旧 Database 0.2／LastStep 0.3 基线与纯 legacy 故事仍按[兼容说明](docs/compatibility.md)运行，Context 也可独立安装，不把新 reader 强制施加到所有旧故事。
+可选 [RP Database](https://github.com/LiweiDonVee/dsh-rp-database) 提供固定版本的故事资料。当前事实／正文修订组合使用 **Database 0.3.2、LastStep 0.4.2、GM 0.2.2、Context 0.3.2**；可配 Loop 0.1.1、Studio 1.5.0 与 StoryKit 0.2.2。旧 Database 0.2／LastStep 0.3 基线与纯 legacy 故事仍按[兼容说明](docs/compatibility.md)运行，Context 也可独立安装，不把新 reader 强制施加到所有旧故事。
 
 多来源引用按 sourceKey 与 entryId 区分，同名 ID 不合并；旧单库服务继续使用 legacy 适配。关键词／向量／重排先给候选，GM 之后可以：
 
@@ -78,3 +78,12 @@ pnpm package
 需要 Node24、pnpm11.9。产物及校验文件在 artifacts。详细批准边界、接口及验收任务见 docs/implementation-plan.md。MIT 许可证。
 
 [架构说明](docs/architecture.md) · [版本兼容](docs/compatibility.md) · [验收记录](docs/acceptance.md) · [更新记录](CHANGELOG.md)
+
+
+## DSH 0.2.2 compatibility
+
+This release requires DSH `>=0.2.2-rc.1 <0.3.0-0`; the exact integration target is Desktop `0.2.2-rc.1`. Future versions in that range have not been individually accepted. Install Database/Context `0.3.2`, LastStep `0.4.2`, and GM/StoryKit `0.2.2` together when using story forks or saved-story restoration.
+
+DSH 0.2.2 ordinary forks preserve a verified event prefix without adding a parent to the canonical Session header. The host-only `rpGM.sessionLineage({sessionId, signal})` returns `{sessionId, parentSessionId: string | null, inheritedEventCount}` from GM's existing durable binding and actual Session observations. RP owners derive ancestry from this result; canonical headers and event logs retain their original bytes. Conflicting legacy header parents or changed prefixes are rejected.
+
+Saved-story format remains schema 1. StoryKit derives the host-only restore argument `lineages: [{sessionId, parentSessionId: string | null}]` from existing `pluginState.gm.payload.bindings`, with one row per destination and `null` for roots. Database, Context, and LastStep verify the actual destination Session prefixes before using this mapping. It is not a model tool or a public owner route.
